@@ -2,11 +2,10 @@ package de.bsi.secvisogram.csafmigrator.mapping;
 
 /**
  * CouchDB JSON field names for each {@link de.bsi.secvisogram.csafmigrator.ObjectType}, transcribed
- * from the {@code couchdb/*Field.java} enums in csaf-cms-backend (branch
- * feat/226-replace-couchdb-with-postgres, as of 2026-08-14) while they still exist.
+ * from the {@code couchdb/*Field.java} enums in csaf-cms-backend at tag v1.1.6 (the last
+ * CouchDB-based release).
  *
- * <p>Those enums are on their way to deletion as part of that branch's phase-9 cleanup, and once
- * they're gone this is the only place left in either codebase that records the original CouchDB
+ * <p>Those enums do not exist in later releases, so this is the reference for the original CouchDB
  * document shape. Do not "clean this up" to match the Postgres column names -- the whole point is
  * that the left-hand side is CouchDB's naming, not Postgres's.</p>
  *

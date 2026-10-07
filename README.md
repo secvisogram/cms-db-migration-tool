@@ -7,37 +7,33 @@ PostgreSQL schema (`V1__initial_schema.sql`, synced 2026-10-06 with branch `feat
 
 ## Why a separate project
 
-`csaf-cms-backend`'s own migration plan (`.claude/skill/migrate-couchdb-to-postgres/phase8-data-migration.md`)
-originally sketched this as an in-app `CommandLineRunner` behind a `migrate-couchdb` Spring
-profile, reusing the IBM Cloudant SDK and `CouchDbService`. That approach was abandoned in
-practice: the Cloudant dependency and `CouchDbService` were deleted from `csaf-cms-backend` back
-in commit `f08d126` (2026-06-27), before phase 8 was ever implemented, and `docker/compose.yaml`
-no longer runs a CouchDB container at all.
+The tool is its own project and not part of `csaf-cms-backend`. That means:
+- `csaf-cms-backend` stays free of one-time migration code and the dependencies it would need.
+- The tool is disposable -- delete it once the migration is done, there is nothing to clean up in the
+  backend.
+- It talks to CouchDB over plain HTTP (`_all_docs?include_docs=true`) with the JDK's own HTTP
+  client, so no CouchDB client library is needed.
 
-Keeping this tool as its own project means:
-- `csaf-cms-backend` never needs the Cloudant SDK back, not even temporarily.
-- The tool is naturally disposable -- delete the repo once the migration is done, no cleanup step
-  needed in the main app.
-- It talks to CouchDB over plain HTTP (`_all_docs?include_docs=true`), which needs no SDK at all.
+## Source data and field mapping
 
-## Where the field mapping comes from
+The tool reads the documents written by the CouchDB-based releases of `csaf-cms-backend` (up to and
+including `v1.1.6`). All seven document types shared one database and are told apart by their `type`
+field: `Advisory`, `AdvisoryVersion`, `Comment`, `CommentAuditTrail`, `AuditTrailDocument`,
+`AuditTrailWorkflow` and `Counter`.
 
-`src/main/java/.../mapping/FieldMappings.java` transcribes the CouchDB JSON field names from
-`csaf-cms-backend`'s `couchdb/*Field.java` enums (`AdvisoryField`, `CommentField`,
-`AuditTrailField`, `AdvisoryAuditTrailField`, `CommentAuditTrailField`), as of 2026-08-14 on branch
-`feat/226-replace-couchdb-with-postgres`. Those enums are slated for deletion as part of that
-branch's phase-9 cleanup; once they're gone, this file is the only remaining record of the
-original CouchDB document shape. If the source schema changes before you run this, re-check it
-against the live `couchdb/*Field.java` files (or the deleted `CouchDbService.java`/
-`CouchDBFilterCreator.java`, recoverable via `git show f08d126^:path/to/File.java`) rather than
-trusting this copy blindly.
+`src/main/java/.../mapping/FieldMappings.java` is the reference for how the CouchDB JSON field names
+map to the PostgreSQL columns. The names come from the `couchdb/*Field.java` enums
+(`AdvisoryField`, `CommentField`, `AuditTrailField`, `AdvisoryAuditTrailField`,
+`CommentAuditTrailField`) and `json/TrackingIdCounter.java` of `csaf-cms-backend` at tag `v1.1.6`;
+those classes no longer exist in later releases. If you migrate data from an older release, compare
+against the same files at the matching tag, for example
+`git show v1.1.0:src/main/java/de/bsi/secvisogram/csaf_cms_backend/couchdb/AdvisoryField.java`.
 
-One correction already folded in: `phase8-data-migration.md` assumes CouchDB `_id`s need parsing
-as hyphen-less UUIDs. They don't -- `CouchDbService.writeDocument(UUID uuid, ...)` and
-`CommentWrapper`'s `UUID.fromString(...)` confirm IDs were always standard hyphenated UUID
-strings, except for `Counter` documents, whose `_id` is a fixed label
-(`TMP_TRACKING_ID_COUNTER` / `FINAL_TRACKING_ID_COUNTER`) that maps straight to `counters.id`
-(`VARCHAR`, not `UUID`).
+Document IDs (`_id`) are standard hyphenated UUIDs and are carried over unchanged as the primary
+keys. The only exception are the two `Counter` documents: their `_id` is a fixed label
+(`TMP_TRACKING_ID_COUNTER` or `FINAL_TRACKING_ID_COUNTER`) that becomes `counters.id` (a `VARCHAR`,
+not a `UUID`). CouchDB's `_rev` has no counterpart and is dropped; the PostgreSQL `version` column
+starts at 0.
 
 ## Building
 
@@ -71,6 +67,23 @@ Options:
   arguments are then not needed). Run this first.
 - `--skip-malformed` loads the valid documents and lists the malformed ones instead of aborting
   before anything is written. The exit code stays non-zero.
+
+## Container image
+
+The `Dockerfile` builds a runtime image (`ghcr.io/secvisogram/cms-db-migration-tool`, published by the
+`Docker Image` workflow on release). The arguments above are simply appended to its entrypoint:
+
+```bash
+docker build -t cms-db-migration-tool .
+docker run --rm cms-db-migration-tool --dry-run --couchdb-url=... --couchdb-user=... --couchdb-password=...
+```
+
+For the upgrade of a `csaf-cms-backend` installation this image is normally not run by hand: the
+`migrate` profile in that project's `docker/compose.yaml` starts a temporary CouchDB on a copy of the old
+data, runs the dry run or the real migration inside the compose network, and is described step by step in
+`documents/upgrade-from-couchdb.md` of `csaf-cms-backend`.
+
+The image build skips the tests (they need Docker); run `mvn test` separately.
 
 ## Testing
 

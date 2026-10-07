@@ -14,8 +14,8 @@
         One-shot, standalone data migration tool: reads all documents out of the CouchDB
         database used by csaf-cms-backend and writes them into the PostgreSQL schema
         introduced by the CouchDB-to-Postgres migration (issue #226). Deliberately kept
-        independent of csaf-cms-backend itself, so it never re-introduces the IBM Cloudant
-        SDK (or any CouchDB client) into the main application's dependency tree.
+        independent of csaf-cms-backend itself, so the main application carries no
+        one-time migration code or extra dependencies.
     </description>
 
     <properties>

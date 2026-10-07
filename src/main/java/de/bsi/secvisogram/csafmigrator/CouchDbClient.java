@@ -15,9 +15,7 @@ import java.util.List;
 
 /**
  * Minimal read-only client for a single CouchDB database, using nothing but the JDK's built-in
- * HttpClient and CouchDB's plain HTTP API. Deliberately does not depend on the IBM Cloudant SDK --
- * the whole reason this tool is a separate project is so csaf-cms-backend never needs that
- * dependency back.
+ * HttpClient and CouchDB's plain HTTP API, so the tool needs no CouchDB client library.
  */
 public class CouchDbClient {
 
