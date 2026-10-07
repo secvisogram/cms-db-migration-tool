@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>de.bsi.secvisogram</groupId>
+    <artifactId>csaf-couchdb-postgres-migrator</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>csaf-couchdb-postgres-migrator</name>
+    <description>
+        One-shot, standalone data migration tool: reads all documents out of the CouchDB
+        database used by csaf-cms-backend and writes them into the PostgreSQL schema
+        introduced by the CouchDB-to-Postgres migration (issue #226). Deliberately kept
+        independent of csaf-cms-backend itself, so it never re-introduces the IBM Cloudant
+        SDK (or any CouchDB client) into the main application's dependency tree.
+    </description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <dependency.version.jackson>2.18.2</dependency.version.jackson>
+        <dependency.version.postgresql>42.7.4</dependency.version.postgresql>
+        <dependency.version.junit>5.11.4</dependency.version.junit>
+        <dependency.version.testcontainers>1.20.4</dependency.version.testcontainers>
+        <plugin.version.shade>3.6.0</plugin.version.shade>
+    </properties>
+
+    <dependencies>
+        <!-- JSON parsing of CouchDB documents. Deliberately the well-known Jackson 2
+             coordinates rather than csaf-cms-backend's tools.jackson (Jackson 3) choice,
+             since this project has no reason to track the main app's dependency churn. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${dependency.version.jackson}</version>
+        </dependency>
+
+        <!-- Writing to the target Postgres schema. Plain JDBC, no JPA/Hibernate,
+             since this tool does one batch load and exits; an ORM buys it nothing. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${dependency.version.postgresql}</version>
+        </dependency>
+
+        <!-- Test-only: end-to-end verification against throwaway CouchDB + Postgres containers. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${dependency.version.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>1.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${dependency.version.testcontainers}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Brings the PostgreSQLContainer used for the target database. The CouchDB side
+                 uses the generic GenericContainer from testcontainers-core (transitive here),
+                 the same way csaf-cms-backend's own (now-orphaned) CouchDBExtension did. -->
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${dependency.version.testcontainers}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>csaf-couchdb-postgres-migrator</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${plugin.version.shade}</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>de.bsi.secvisogram.csafmigrator.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
