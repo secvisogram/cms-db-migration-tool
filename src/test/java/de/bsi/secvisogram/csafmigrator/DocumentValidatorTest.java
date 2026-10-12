@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -44,6 +45,12 @@ class DocumentValidatorTest {
                 """.formatted(id, advisoryId, answer);
     }
 
+    private Map<String, Set<String>> validate(MigrationReport report) {
+        DocumentValidator validator = new DocumentValidator(report);
+        byType.values().forEach(docs -> docs.forEach(validator::accept));
+        return validator.finish();
+    }
+
     @Test
     void acceptsWellFormedDocuments() throws Exception {
         add("Advisory", advisory(ADV, ""));
@@ -52,7 +59,7 @@ class DocumentValidatorTest {
         add("Counter", "{\"_id\": \"TMP_TRACKING_ID_COUNTER\", \"type\": \"Counter\", \"count\": 3}");
 
         MigrationReport report = new MigrationReport();
-        Map<String, List<JsonNode>> valid = DocumentValidator.validate(byType, report);
+        Map<String, Set<String>> valid = validate(report);
 
         assertFalse(report.hasErrors());
         assertEquals(2, valid.get("Comment").size());
@@ -67,7 +74,7 @@ class DocumentValidatorTest {
         add("Advisory", "{\"type\": \"Advisory\"}");
 
         MigrationReport report = new MigrationReport();
-        Map<String, List<JsonNode>> valid = DocumentValidator.validate(byType, report);
+        Map<String, Set<String>> valid = validate(report);
 
         assertEquals(1, valid.get("Advisory").size());
         assertEquals(3, report.errorCount());
@@ -92,7 +99,7 @@ class DocumentValidatorTest {
                 """.formatted(OTHER, C3));
 
         MigrationReport report = new MigrationReport();
-        Map<String, List<JsonNode>> valid = DocumentValidator.validate(byType, report);
+        Map<String, Set<String>> valid = validate(report);
 
         assertEquals(1, valid.get("Advisory").size());
         assertTrue(valid.get("AdvisoryVersion").isEmpty());
@@ -116,7 +123,7 @@ class DocumentValidatorTest {
         add("Counter", "{\"_id\": \"TMP_TRACKING_ID_COUNTER\", \"type\": \"Counter\", \"count\": \"many\"}");
 
         MigrationReport report = new MigrationReport();
-        Map<String, List<JsonNode>> valid = DocumentValidator.validate(byType, report);
+        Map<String, Set<String>> valid = validate(report);
 
         assertEquals(1, valid.get("Advisory").size());
         assertEquals(4, report.errorCount());

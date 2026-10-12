@@ -10,6 +10,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -121,24 +122,19 @@ public class PostgresWriter {
     }
 
     /** Pass 2: wire up answer_to now that every comment row exists. */
-    public int linkCommentAnswers(List<JsonNode> docs) throws SQLException {
+    public int linkCommentAnswers(Map<String, String> answerToByCommentId) throws SQLException {
+        if (answerToByCommentId.isEmpty()) {
+            return 0;
+        }
         String sql = "UPDATE comments SET answer_to = ? WHERE id = ?";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
-            int count = 0;
-            for (JsonNode doc : docs) {
-                String answerTo = text(doc, FieldMappings.Comment.ANSWER_TO);
-                if (answerTo == null) {
-                    continue;
-                }
-                ps.setObject(1, UUID.fromString(answerTo));
-                ps.setObject(2, uuid(doc));
+            for (Map.Entry<String, String> entry : answerToByCommentId.entrySet()) {
+                ps.setObject(1, UUID.fromString(entry.getValue()));
+                ps.setObject(2, UUID.fromString(entry.getKey()));
                 ps.addBatch();
-                count++;
             }
-            if (count > 0) {
-                ps.executeBatch();
-            }
-            return count;
+            ps.executeBatch();
+            return answerToByCommentId.size();
         }
     }
 

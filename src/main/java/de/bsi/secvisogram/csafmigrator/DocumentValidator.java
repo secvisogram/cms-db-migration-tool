@@ -18,67 +18,121 @@ import java.util.function.Function;
  * and timestamp formats, foreign-key targets) before anything is written, so a bad document is
  * reported with its id and reason instead of surfacing as a mid-run SQL exception.
  *
+ * <p>Documents are fed in one at a time via {@link #accept}, so the full documents never have to be
+ * held in memory: only a small record per valid document (its id and the ids it references) is
+ * kept. {@link #finish} then runs the referential checks on those records.</p>
+ *
  * <p>Referential checks cascade: a document pointing at an invalid or missing parent (an
  * AdvisoryVersion of a malformed Advisory, an answer to a skipped Comment, ...) is itself
  * rejected, since inserting it would violate a foreign key.</p>
  */
 public final class DocumentValidator {
 
-    private DocumentValidator() {
+    /** What is kept of a document that passed its own-field checks. */
+    private record Light(String id, String ref, String answerTo, String trackingId) {
+    }
+
+    private final MigrationReport report;
+    private final Map<String, Integer> sourceCounts = new LinkedHashMap<>();
+    private final Map<String, List<Light>> lights = new LinkedHashMap<>();
+    private int documentCount;
+
+    public DocumentValidator(MigrationReport report) {
+        this.report = report;
+    }
+
+    /** Checks one document on its own and remembers what the referential checks need. */
+    public void accept(JsonNode doc) {
+        documentCount++;
+        String type = doc.path(FieldMappings.TYPE).asText(null);
+        if (type == null) {
+            type = "<no type>";
+        }
+        sourceCounts.merge(type, 1, Integer::sum);
+
+        if (!isKnownType(type)) {
+            report.recordError(id(doc), "unknown document type '" + type + "'");
+            return;
+        }
+        String problem = checkOwnFields(type, doc);
+        if (problem != null) {
+            report.recordError(id(doc), type + ": " + problem);
+            return;
+        }
+        lights.computeIfAbsent(type, t -> new ArrayList<>()).add(light(ObjectType.valueOf(type), doc));
+    }
+
+    public int documentCount() {
+        return documentCount;
+    }
+
+    /** Number of documents seen per type, including unknown types, in first-seen order. */
+    public Map<String, Integer> sourceCounts() {
+        return sourceCounts;
     }
 
     /**
-     * @return the documents that are safe to insert, grouped by type. Every rejected document is
-     *         recorded on {@code report} with its reason.
+     * Runs the referential checks. Every rejected document is recorded on the report with its
+     * reason.
+     *
+     * @return the ids of the documents that are safe to insert, per known type present in the source
      */
-    public static Map<String, List<JsonNode>> validate(Map<String, List<JsonNode>> byType, MigrationReport report) {
-        Map<String, List<JsonNode>> valid = new LinkedHashMap<>();
-
-        for (Map.Entry<String, List<JsonNode>> entry : byType.entrySet()) {
-            String type = entry.getKey();
-            if (!isKnownType(type)) {
-                entry.getValue().forEach(d -> report.recordError(id(d), "unknown document type '" + type + "'"));
-                continue;
-            }
-            List<JsonNode> ok = new ArrayList<>();
-            for (JsonNode doc : entry.getValue()) {
-                String problem = checkOwnFields(type, doc);
-                if (problem == null) {
-                    ok.add(doc);
-                } else {
-                    report.recordError(id(doc), type + ": " + problem);
-                }
-            }
-            valid.put(type, ok);
-        }
-
-        // Referential checks, parents first. Comments iterate to a fixpoint because an answer
-        // can point at a comment that is itself rejected.
-        Set<String> advisoryIds = ids(valid, ObjectType.Advisory);
-        retainWhere(valid, ObjectType.AdvisoryVersion, report,
-                d -> missing(FieldMappings.Advisory.ADVISORY_REFERENCE, d, advisoryIds));
-        retainWhere(valid, ObjectType.Comment, report,
-                d -> missing(FieldMappings.Comment.ADVISORY_ID, d, advisoryIds));
+    public Map<String, Set<String>> finish() {
+        // Parents first. Comments iterate to a fixpoint because an answer can point at a comment
+        // that is itself rejected.
+        Set<String> advisoryIds = ids(ObjectType.Advisory);
+        retain(ObjectType.AdvisoryVersion, FieldMappings.Advisory.ADVISORY_REFERENCE, Light::ref, advisoryIds);
+        retain(ObjectType.Comment, FieldMappings.Comment.ADVISORY_ID, Light::ref, advisoryIds);
         int before;
         do {
-            before = valid.getOrDefault(ObjectType.Comment.name(), List.of()).size();
-            Set<String> commentIds = ids(valid, ObjectType.Comment);
-            retainWhere(valid, ObjectType.Comment, report, d -> {
-                JsonNode answerTo = d.path(FieldMappings.Comment.ANSWER_TO);
-                return answerTo.isMissingNode() || answerTo.isNull()
-                        ? null : missing(FieldMappings.Comment.ANSWER_TO, d, commentIds);
-            });
-        } while (valid.getOrDefault(ObjectType.Comment.name(), List.of()).size() != before);
+            before = lights(ObjectType.Comment).size();
+            Set<String> commentIds = ids(ObjectType.Comment);
+            retain(ObjectType.Comment, FieldMappings.Comment.ANSWER_TO, Light::answerTo, commentIds);
+        } while (lights(ObjectType.Comment).size() != before);
 
-        retainWhere(valid, ObjectType.AuditTrailDocument, report,
-                d -> missing(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID, d, advisoryIds));
-        retainWhere(valid, ObjectType.AuditTrailWorkflow, report,
-                d -> missing(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID, d, advisoryIds));
-        Set<String> commentIds = ids(valid, ObjectType.Comment);
-        retainWhere(valid, ObjectType.CommentAuditTrail, report,
-                d -> missing(FieldMappings.CommentAuditTrail.COMMENT_ID, d, commentIds));
+        retain(ObjectType.AuditTrailDocument, FieldMappings.AdvisoryAuditTrail.ADVISORY_ID, Light::ref, advisoryIds);
+        retain(ObjectType.AuditTrailWorkflow, FieldMappings.AdvisoryAuditTrail.ADVISORY_ID, Light::ref, advisoryIds);
+        retain(ObjectType.CommentAuditTrail, FieldMappings.CommentAuditTrail.COMMENT_ID, Light::ref, ids(ObjectType.Comment));
 
-        return valid;
+        Map<String, Set<String>> accepted = new LinkedHashMap<>();
+        for (String type : sourceCounts.keySet()) {
+            if (isKnownType(type)) {
+                accepted.put(type, ids(ObjectType.valueOf(type)));
+            }
+        }
+        return accepted;
+    }
+
+    /** Tracking id per accepted advisory that has a textual one. Call after {@link #finish}. */
+    public Map<String, String> advisoryTrackingIds() {
+        Map<String, String> trackingIds = new LinkedHashMap<>();
+        for (Light advisory : lights(ObjectType.Advisory)) {
+            if (advisory.trackingId() != null) {
+                trackingIds.put(advisory.id(), advisory.trackingId());
+            }
+        }
+        return trackingIds;
+    }
+
+    private static Light light(ObjectType type, JsonNode doc) {
+        String id = doc.path(FieldMappings.ID).asText();
+        return switch (type) {
+            case Advisory -> {
+                JsonNode trackingId = doc.path(FieldMappings.Advisory.CSAF).path("document").path("tracking").path("id");
+                yield new Light(id, null, null, trackingId.isTextual() ? trackingId.asText() : null);
+            }
+            case AdvisoryVersion -> new Light(id, doc.path(FieldMappings.Advisory.ADVISORY_REFERENCE).asText(), null, null);
+            case Comment -> {
+                JsonNode answerTo = doc.path(FieldMappings.Comment.ANSWER_TO);
+                yield new Light(id, doc.path(FieldMappings.Comment.ADVISORY_ID).asText(),
+                        answerTo.isMissingNode() || answerTo.isNull() ? null : answerTo.asText(), null);
+            }
+            case AuditTrailDocument, AuditTrailWorkflow ->
+                    new Light(id, doc.path(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID).asText(), null, null);
+            case CommentAuditTrail ->
+                    new Light(id, doc.path(FieldMappings.CommentAuditTrail.COMMENT_ID).asText(), null, null);
+            case Counter -> new Light(id, null, null, null);
+        };
     }
 
     private static String checkOwnFields(String type, JsonNode doc) {
@@ -123,33 +177,33 @@ public final class DocumentValidator {
 
     // -- helpers ---------------------------------------------------------------------------------
 
-    private static void retainWhere(Map<String, List<JsonNode>> valid, ObjectType type, MigrationReport report,
-                                    Function<JsonNode, String> problemOf) {
-        List<JsonNode> docs = valid.get(type.name());
+    private List<Light> lights(ObjectType type) {
+        return lights.getOrDefault(type.name(), List.of());
+    }
+
+    /** Drops every document of {@code type} whose reference (a null reference is fine) is not in {@code knownIds}. */
+    private void retain(ObjectType type, String field, Function<Light, String> referenceOf, Set<String> knownIds) {
+        List<Light> docs = lights.get(type.name());
         if (docs == null) {
             return;
         }
-        List<JsonNode> kept = new ArrayList<>();
-        for (JsonNode doc : docs) {
-            String problem = problemOf.apply(doc);
-            if (problem == null) {
+        List<Light> kept = new ArrayList<>();
+        for (Light doc : docs) {
+            String reference = referenceOf.apply(doc);
+            if (reference == null || knownIds.contains(reference)) {
                 kept.add(doc);
             } else {
-                report.recordError(id(doc), type.name() + ": " + problem);
+                report.recordError(doc.id(), type.name() + ": " + field + " '" + reference
+                        + "' references a missing or rejected document");
             }
         }
-        valid.put(type.name(), kept);
+        lights.put(type.name(), kept);
     }
 
-    private static Set<String> ids(Map<String, List<JsonNode>> valid, ObjectType type) {
+    private Set<String> ids(ObjectType type) {
         Set<String> ids = new HashSet<>();
-        valid.getOrDefault(type.name(), List.of()).forEach(d -> ids.add(d.path(FieldMappings.ID).asText()));
+        lights(type).forEach(d -> ids.add(d.id()));
         return ids;
-    }
-
-    private static String missing(String field, JsonNode doc, Set<String> knownIds) {
-        String value = doc.path(field).asText("");
-        return knownIds.contains(value) ? null : field + " '" + value + "' references a missing or rejected document";
     }
 
     private static String firstProblem(String... problems) {

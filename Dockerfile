@@ -18,5 +18,9 @@ LABEL org.opencontainers.image.description="One-time CouchDB to PostgreSQL data 
 WORKDIR /app
 COPY --from=build /build/target/csaf-couchdb-postgres-migrator.jar migrator.jar
 
+# Size the heap relative to the container's memory limit. Override at run time with
+# -e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50 (or -Xmx...).
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
+
 # Arguments (--couchdb-url=..., --pg-url=..., --dry-run, ...) are appended to this command.
 ENTRYPOINT ["java", "-jar", "/app/migrator.jar"]

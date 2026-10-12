@@ -18,7 +18,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -139,6 +142,19 @@ class MigrationIntegrationTest {
         }
 
         report.print();
+    }
+
+    @Test
+    void keysetPagingVisitsEveryDocumentExactlyOnce() throws Exception {
+        // 9 seeded documents with a page size of 2: several pages plus a short last page.
+        CouchDbClient client = new CouchDbClient(
+                "http://" + couchDb.getHost() + ":" + couchDb.getMappedPort(COUCHDB_PORT) + "/" + COUCHDB_DB,
+                COUCHDB_USER, COUCHDB_PASSWORD, 2);
+        List<String> ids = new ArrayList<>();
+        client.forEachDocument(doc -> ids.add(doc.path("_id").asText()));
+
+        assertEquals(9, ids.size());
+        assertEquals(9, new HashSet<>(ids).size(), "a document was returned more than once");
     }
 
     private static String createdAtDate(Connection conn, String table, String id) throws Exception {

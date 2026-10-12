@@ -20,6 +20,8 @@ public class MigrationConfig {
     public final boolean skipMalformed;
     /** Read and validate only; never connect to PostgreSQL. */
     public final boolean dryRun;
+    /** Documents fetched from CouchDB per request; bounds how many full documents are in memory. */
+    public final int pageSize;
 
     /** Direct construction, e.g. from a test wiring up Testcontainers endpoints -- no CLI
      *  parsing involved. */
@@ -35,6 +37,17 @@ public class MigrationConfig {
 
     public MigrationConfig(String couchdbUrl, String couchdbUser, String couchdbPassword,
                             String pgUrl, String pgUser, String pgPassword, boolean skipMalformed, boolean dryRun) {
+        this(couchdbUrl, couchdbUser, couchdbPassword, pgUrl, pgUser, pgPassword, skipMalformed, dryRun,
+                CouchDbClient.DEFAULT_PAGE_SIZE);
+    }
+
+    public MigrationConfig(String couchdbUrl, String couchdbUser, String couchdbPassword,
+                            String pgUrl, String pgUser, String pgPassword, boolean skipMalformed, boolean dryRun,
+                            int pageSize) {
+        if (pageSize < 1) {
+            throw usage("--page-size must be a positive number");
+        }
+        this.pageSize = pageSize;
         this.skipMalformed = skipMalformed;
         this.dryRun = dryRun;
         this.couchdbUrl = couchdbUrl;
@@ -49,7 +62,7 @@ public class MigrationConfig {
         this(require(args, "couchdb-url"), require(args, "couchdb-user"), require(args, "couchdb-password"),
                 requireUnlessDryRun(args, "pg-url"), requireUnlessDryRun(args, "pg-user"),
                 requireUnlessDryRun(args, "pg-password"),
-                args.containsKey("skip-malformed"), args.containsKey("dry-run"));
+                args.containsKey("skip-malformed"), args.containsKey("dry-run"), pageSize(args));
     }
 
     public static MigrationConfig parse(String[] argv) {
@@ -66,6 +79,18 @@ public class MigrationConfig {
             args.put(arg.substring(2, eq), arg.substring(eq + 1));
         }
         return new MigrationConfig(args);
+    }
+
+    private static int pageSize(Map<String, String> args) {
+        String value = args.get("page-size");
+        if (value == null) {
+            return CouchDbClient.DEFAULT_PAGE_SIZE;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            throw usage("--page-size must be a positive number, got: " + value);
+        }
     }
 
     private static String requireUnlessDryRun(Map<String, String> args, String key) {
@@ -92,11 +117,13 @@ public class MigrationConfig {
                     --pg-url=jdbc:postgresql://new-host:5432/csaf \\
                     --pg-user=csaf \\
                     --pg-password=secret \\
-                    [--skip-malformed] [--dry-run]
+                    [--skip-malformed] [--dry-run] [--page-size=500]
 
                 By default any malformed document aborts the run before anything is written.
                 --dry-run only reads CouchDB and validates; the --pg-* arguments are then not needed.
                 --skip-malformed loads the valid documents and reports the rest (exit code stays 1).
+                --page-size is how many documents are read from CouchDB per request (default 500).
+                Lower it if the documents are large and the tool runs out of memory.
                 """);
     }
 }

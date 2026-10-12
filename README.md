@@ -37,6 +37,7 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 | `--pg-url`, `--pg-user`, `--pg-password` | Target PostgreSQL database (not needed with `--dry-run`) |
 | `--dry-run` | Read CouchDB and run all validation, never touch PostgreSQL. **Run this first.** |
 | `--skip-malformed` | Load the valid documents and list the malformed ones instead of aborting |
+| `--page-size=N` | Documents read from CouchDB per request (default 500). Lower it for large documents if memory is tight. |
 
 ### Before you run it
 
@@ -60,15 +61,16 @@ All seven document types of the old database: `Advisory`, `AdvisoryVersion`, `Co
 
 - Document IDs (`_id`) are kept as primary keys. The two `Counter` documents keep their fixed labels.
 - CouchDB `_rev` is dropped; the PostgreSQL `version` column starts at 0.
-- `created_at` of advisories and comments is taken from their earliest audit-trail row. Entities without
-  audit rows, and all advisory versions, get the import time.
+- `created_at` of advisories and comments is taken from their earliest audit-trail row. The old
+  documents' own `createdAt` field is not used: it is missing on advisories that were edited at least
+  once. Entities without audit rows, and all advisory versions, get the import time.
 - The field mapping lives in `src/main/java/.../mapping/FieldMappings.java`.
 
 ## Validation
 
 Everything is checked before anything is written: required fields, UUID and timestamp formats, unknown
 or missing `type`, and foreign-key targets (versions, comments, answers and audit rows pointing at a
-missing or rejected parent). By default any problem aborts the run with nothing written and every
+missing or rejected parent). By default, any problem aborts the run with nothing written and every
 offending `_id` listed.
 
 - Duplicate advisory tracking IDs always abort the run. Fix them in CouchDB and re-run.
@@ -77,7 +79,9 @@ offending `_id` listed.
 ## Limitations
 
 - No resume: a failure rolls back the whole transaction, and you re-run from scratch.
-- Reads CouchDB with `skip`/`limit` paging, which slows down on very large databases.
+- Documents are streamed, so memory use depends on the document count, not their size. The tool reads
+  CouchDB up to eight times (once to validate, once per document type), so CouchDB must not change
+  during the run.
 - Tested only against small, hand-seeded data. Try it on a copy of real data before the real cutover.
 
 ## Development
