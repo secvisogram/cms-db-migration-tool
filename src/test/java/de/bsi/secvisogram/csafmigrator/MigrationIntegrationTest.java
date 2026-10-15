@@ -127,6 +127,11 @@ class MigrationIntegrationTest {
                 assertEquals("TEST-001", rs.getString(1));
             }
 
+            // Columns the backend derives from csaf (its list queries and unique index use them).
+            assertEquals("TEST-001|Test Advisory|2026-01-05T10:00:00Z", listColumns(conn, "advisories", ADVISORY_ID));
+            // An unparseable release date becomes NULL, like the backend does.
+            assertEquals("TEST-001|Test Advisory v1|null", listColumns(conn, "advisory_versions", ADVISORY_VERSION_ID));
+
             // created_at backfilled from the earliest audit-trail row; entities without one keep now().
             assertEquals("2026-01-01", createdAtDate(conn, "advisories", ADVISORY_ID));
             assertEquals("2026-01-03", createdAtDate(conn, "comments", COMMENT_ID));
@@ -155,6 +160,17 @@ class MigrationIntegrationTest {
 
         assertEquals(9, ids.size());
         assertEquals(9, new HashSet<>(ids).size(), "a document was returned more than once");
+    }
+
+    private static String listColumns(Connection conn, String table, String id) throws Exception {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT tracking_id || '|' || document_title || '|' || "
+                             + "coalesce(to_char(current_release_date AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'null') "
+                             + "FROM " + table + " WHERE id = '" + id + "'")) {
+            assertEquals(true, rs.next());
+            return rs.getString(1);
+        }
     }
 
     private static String createdAtDate(Connection conn, String table, String id) throws Exception {
@@ -191,7 +207,8 @@ class MigrationIntegrationTest {
                   "type": "Advisory",
                   "workflowState": "Draft",
                   "owner": "test-user",
-                  "csaf": {"document": {"title": "Test Advisory", "tracking": {"id": "TEST-001"}}},
+                  "csaf": {"document": {"title": "Test Advisory", "tracking": {"id": "TEST-001",
+                           "current_release_date": "2026-01-05T10:00:00Z"}}},
                   "versioningType": "Semantic",
                   "lastMajorVersion": "1",
                   "tmpTrackingId": "TEMP-001"
@@ -203,7 +220,8 @@ class MigrationIntegrationTest {
                   "advisoryReference": "%s",
                   "workflowState": "Draft",
                   "owner": "test-user",
-                  "csaf": {"document": {"title": "Test Advisory v1", "tracking": {"id": "TEST-001"}}},
+                  "csaf": {"document": {"title": "Test Advisory v1", "tracking": {"id": "TEST-001",
+                           "current_release_date": "not-a-date"}}},
                   "versioningType": "Semantic",
                   "lastMajorVersion": "1"
                 }

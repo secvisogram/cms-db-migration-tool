@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,8 +52,9 @@ public class PostgresWriter {
     public int insertAdvisories(List<JsonNode> docs) throws SQLException {
         String sql = """
                 INSERT INTO advisories
-                    (id, workflow_state, owner, csaf, versioning_type, last_major_version, tmp_tracking_id)
-                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?)
+                    (id, workflow_state, owner, csaf, tracking_id, document_title, current_release_date,
+                     versioning_type, last_major_version, tmp_tracking_id)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int count = 0;
@@ -60,10 +62,10 @@ public class PostgresWriter {
                 ps.setObject(1, uuid(doc));
                 ps.setString(2, text(doc, FieldMappings.Advisory.WORKFLOW_STATE));
                 ps.setString(3, text(doc, FieldMappings.Advisory.OWNER));
-                ps.setString(4, doc.path(FieldMappings.Advisory.CSAF).toString());
-                ps.setString(5, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
-                ps.setString(6, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
-                ps.setString(7, text(doc, FieldMappings.Advisory.TMP_TRACKING_ID));
+                setCsafAndListColumns(ps, 4, doc);
+                ps.setString(8, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
+                ps.setString(9, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
+                ps.setString(10, text(doc, FieldMappings.Advisory.TMP_TRACKING_ID));
                 ps.addBatch();
                 count++;
             }
@@ -75,8 +77,9 @@ public class PostgresWriter {
     public int insertAdvisoryVersions(List<JsonNode> docs) throws SQLException {
         String sql = """
                 INSERT INTO advisory_versions
-                    (id, advisory_id, workflow_state, owner, csaf, versioning_type, last_major_version)
-                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)
+                    (id, advisory_id, workflow_state, owner, csaf, tracking_id, document_title,
+                     current_release_date, versioning_type, last_major_version)
+                VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int count = 0;
@@ -85,9 +88,9 @@ public class PostgresWriter {
                 ps.setObject(2, uuidOrNull(text(doc, FieldMappings.Advisory.ADVISORY_REFERENCE)));
                 ps.setString(3, text(doc, FieldMappings.Advisory.WORKFLOW_STATE));
                 ps.setString(4, text(doc, FieldMappings.Advisory.OWNER));
-                ps.setString(5, doc.path(FieldMappings.Advisory.CSAF).toString());
-                ps.setString(6, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
-                ps.setString(7, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
+                setCsafAndListColumns(ps, 5, doc);
+                ps.setString(9, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
+                ps.setString(10, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
                 ps.addBatch();
                 count++;
             }
@@ -252,6 +255,38 @@ public class PostgresWriter {
             }
             ps.executeBatch();
             return count;
+        }
+    }
+
+    /**
+     * Sets the {@code csaf} JSONB column at {@code firstIndex} and the three columns the backend
+     * derives from it, in the order of the INSERT statements above: tracking_id, document_title and
+     * current_release_date. They are redundant copies that the backend's list queries and unique
+     * index rely on, so a migrated row must carry them. Same rules as the backend's
+     * {@code PostgresRepositoryService}: a missing value is NULL, and so is a release date that is
+     * not an ISO-8601 instant.
+     */
+    private static void setCsafAndListColumns(PreparedStatement ps, int firstIndex, JsonNode doc) throws SQLException {
+        JsonNode csaf = doc.path(FieldMappings.Advisory.CSAF);
+        ps.setString(firstIndex, csaf.toString());
+        ps.setString(firstIndex + 1, textAt(csaf, "/document/tracking/id"));
+        ps.setString(firstIndex + 2, textAt(csaf, "/document/title"));
+        ps.setTimestamp(firstIndex + 3, releaseDate(textAt(csaf, "/document/tracking/current_release_date")));
+    }
+
+    private static String textAt(JsonNode node, String pointer) {
+        JsonNode value = node.at(pointer);
+        return value.isMissingNode() || value.isNull() ? null : value.asText();
+    }
+
+    private static Timestamp releaseDate(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Timestamp.from(Instant.parse(value));
+        } catch (DateTimeParseException e) {
+            return null;
         }
     }
 
