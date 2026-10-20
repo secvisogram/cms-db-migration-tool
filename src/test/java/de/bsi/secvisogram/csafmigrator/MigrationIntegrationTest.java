@@ -1,5 +1,6 @@
 package de.bsi.secvisogram.csafmigrator;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -136,6 +137,9 @@ class MigrationIntegrationTest {
             assertEquals("2026-01-01", createdAtDate(conn, "advisories", ADVISORY_ID));
             assertEquals("2026-01-03", createdAtDate(conn, "comments", COMMENT_ID));
             assertNotEquals("2026-01-03", createdAtDate(conn, "comments", ANSWER_ID));
+            // Without audit rows (this comment, and every advisory version) created_at is the import time.
+            assertEquals(true, createdRecently(conn, "comments", ANSWER_ID));
+            assertEquals(true, createdRecently(conn, "advisory_versions", ADVISORY_VERSION_ID));
 
             // Counter values carried over correctly.
             try (Statement stmt = conn.createStatement();
@@ -147,6 +151,128 @@ class MigrationIntegrationTest {
         }
 
         report.print();
+    }
+
+    @Test
+    void groupedPassesWorkAcrossManySmallPages() throws Exception {
+        // Page size 2 splits the 9 documents over 5 pages, each mixing several types, so every write
+        // group has to pick its own types out of pages that also contain others.
+        MigrationConfig config = new MigrationConfig(
+                "http://" + couchDb.getHost() + ":" + couchDb.getMappedPort(COUCHDB_PORT) + "/" + COUCHDB_DB,
+                COUCHDB_USER, COUCHDB_PASSWORD,
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), false, false, 2);
+
+        MigrationReport report = Migrator.migrate(config);
+
+        assertFalse(report.hasMismatches(), "migration report recorded a source/inserted count mismatch");
+        try (Connection conn = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+            assertRowCount(conn, "advisories", 1);
+            assertRowCount(conn, "advisory_versions", 1);
+            assertRowCount(conn, "comments", 2);
+            assertRowCount(conn, "audit_trail_documents", 1);
+            assertRowCount(conn, "audit_trail_workflows", 1);
+            assertRowCount(conn, "audit_trail_comments", 1);
+            assertRowCount(conn, "counters", 2);
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SELECT answer_to FROM comments WHERE id = '" + ANSWER_ID + "'")) {
+                assertEquals(true, rs.next());
+                assertEquals(COMMENT_ID, rs.getString(1));
+            }
+        }
+    }
+
+    @Test
+    void projectedReadReturnsOnlyTheSmallFieldsAndEveryDocumentOnce() throws Exception {
+        CouchDbClient client = new CouchDbClient(
+                "http://" + couchDb.getHost() + ":" + couchDb.getMappedPort(COUCHDB_PORT) + "/" + COUCHDB_DB,
+                COUCHDB_USER, COUCHDB_PASSWORD, 2);
+        List<JsonNode> docs = new ArrayList<>();
+        client.forEachProjectedDocument(docs::add);
+
+        assertEquals(9, docs.size());
+        assertEquals(9, docs.stream().map(d -> d.path("_id").asText()).collect(java.util.stream.Collectors.toSet()).size());
+        JsonNode advisory = docs.stream().filter(d -> d.path("_id").asText().equals(ADVISORY_ID)).findFirst().orElseThrow();
+        assertEquals("TEST-001", advisory.path("csaf").path("document").path("tracking").path("id").asText());
+        assertFalse(advisory.path("csaf").path("document").has("title"), "the csaf body must not be downloaded");
+
+        assertEquals(java.util.Set.of(ADVISORY_ID, ADVISORY_VERSION_ID), client.findIdsWithCsafObject());
+    }
+
+    @Test
+    void projectedAndFullValidationReadsGiveTheSameResult() throws Exception {
+        String database = "csaf_malformed";
+        createCouchDbDatabase(database);
+        String ok = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        String advisoryFields = "\"workflowState\": \"Draft\", \"owner\": \"u\", \"versioningType\": \"Semantic\"";
+        putDoc(database, ok, "{\"type\": \"Advisory\", " + advisoryFields
+                + ", \"csaf\": {\"document\": {\"tracking\": {\"id\": \"OK-1\"}}}}");
+        // csaf is an object without a tracking id: valid, and must not be mistaken for a missing csaf.
+        putDoc(database, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "{\"type\": \"Advisory\", " + advisoryFields + ", \"csaf\": {}}");
+        String csafString = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+        putDoc(database, csafString, "{\"type\": \"Advisory\", " + advisoryFields + ", \"csaf\": \"nope\"}");
+        putDoc(database, "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                "{\"type\": \"Advisory\", " + advisoryFields + "}");
+        putDoc(database, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                "{\"type\": \"Advisory\", " + advisoryFields + ", \"csaf\": null}");
+        // a version without csaf, a version of a missing advisory, and a comment on a rejected advisory
+        putDoc(database, "11111111-0000-0000-0000-000000000001", "{\"type\": \"AdvisoryVersion\", \"advisoryReference\": \""
+                + ok + "\", " + advisoryFields + "}");
+        putDoc(database, "11111111-0000-0000-0000-000000000002", "{\"type\": \"AdvisoryVersion\", \"advisoryReference\": \""
+                + "99999999-9999-9999-9999-999999999999\", " + advisoryFields + ", \"csaf\": {}}");
+        putDoc(database, "11111111-0000-0000-0000-000000000003", "{\"type\": \"Comment\", \"advisoryId\": \""
+                + csafString + "\", \"owner\": \"u\", \"commentText\": \"t\"}");
+        putDoc(database, "TMP_TRACKING_ID_COUNTER", "{\"type\": \"Counter\", \"count\": 1}");
+        putDoc(database, "11111111-0000-0000-0000-000000000004", "{\"type\": \"Mystery\"}");
+
+        String url = "http://" + couchDb.getHost() + ":" + couchDb.getMappedPort(COUCHDB_PORT) + "/" + database;
+        // skipMalformed + dryRun: nothing is written, and "inserted" is what would be loaded.
+        MigrationReport full = Migrator.migrate(new MigrationConfig(url, COUCHDB_USER, COUCHDB_PASSWORD,
+                null, null, null, true, true, 2, true));
+        MigrationReport projected = Migrator.migrate(new MigrationConfig(url, COUCHDB_USER, COUCHDB_PASSWORD,
+                null, null, null, true, true, 2, false));
+
+        assertFalse(full.errors().isEmpty());
+        assertEquals(full.errors(), projected.errors());
+        assertEquals(full.sourceCounts(), projected.sourceCounts());
+        assertEquals(full.insertedCounts(), projected.insertedCounts());
+        // The two advisories with a usable csaf object survive, the three without one are rejected.
+        assertEquals(2, projected.insertedCounts().get("Advisory"));
+        // Both versions are rejected (no csaf; advisory missing), and so is the comment on a rejected advisory.
+        assertEquals(0, projected.insertedCounts().getOrDefault("AdvisoryVersion", 0).intValue());
+        assertEquals(0, projected.insertedCounts().getOrDefault("Comment", 0).intValue());
+    }
+
+    @Test
+    void fetchingByIdReturnsExactlyTheRequestedExistingDocuments() throws Exception {
+        String database = "csaf_by_id";
+        createCouchDbDatabase(database);
+        putDoc(database, "aaaaaaaa-0000-0000-0000-000000000001", "{\"type\": \"Counter\", \"count\": 1}");
+        putDoc(database, "aaaaaaaa-0000-0000-0000-000000000002", "{\"type\": \"Counter\", \"count\": 2}");
+        putDoc(database, "aaaaaaaa-0000-0000-0000-000000000003", "{\"type\": \"Counter\", \"count\": 3}");
+        putDoc(database, "aaaaaaaa-0000-0000-0000-000000000004", "{\"type\": \"Counter\", \"count\": 4}");
+        // A deleted document: CouchDB still lists its id but has no document for it.
+        String revision = putDocRevision(database, "aaaaaaaa-0000-0000-0000-000000000005", "{\"type\": \"Counter\", \"count\": 5}");
+        deleteDoc(database, "aaaaaaaa-0000-0000-0000-000000000005", revision);
+
+        CouchDbClient client = new CouchDbClient(
+                "http://" + couchDb.getHost() + ":" + couchDb.getMappedPort(COUCHDB_PORT) + "/" + database,
+                COUCHDB_USER, COUCHDB_PASSWORD, 500);
+        List<String> found = new ArrayList<>();
+        List<Integer> chunkSizes = new ArrayList<>();
+        client.forEachByIds(List.of("aaaaaaaa-0000-0000-0000-000000000003", "aaaaaaaa-0000-0000-0000-000000000001",
+                        "aaaaaaaa-0000-0000-0000-000000000099", "aaaaaaaa-0000-0000-0000-000000000005",
+                        "aaaaaaaa-0000-0000-0000-000000000004"), 2,
+                page -> {
+                    chunkSizes.add(page.size());
+                    page.forEach(doc -> found.add(doc.path("_id").asText()));
+                });
+
+        // Unknown and deleted ids are skipped; the rest comes back once each, in the order asked for.
+        assertEquals(List.of("aaaaaaaa-0000-0000-0000-000000000003", "aaaaaaaa-0000-0000-0000-000000000001",
+                "aaaaaaaa-0000-0000-0000-000000000004"), found);
+        assertEquals(List.of(2, 1), chunkSizes);
     }
 
     @Test
@@ -173,6 +299,15 @@ class MigrationIntegrationTest {
         }
     }
 
+    private static boolean createdRecently(Connection conn, String table, String id) throws Exception {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT created_at > now() - interval '10 minutes' FROM " + table
+                     + " WHERE id = '" + id + "'")) {
+            assertEquals(true, rs.next());
+            return rs.getBoolean(1);
+        }
+    }
+
     private static String createdAtDate(Connection conn, String table, String id) throws Exception {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
@@ -191,7 +326,11 @@ class MigrationIntegrationTest {
     }
 
     private static void createCouchDbDatabase() throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + COUCHDB_DB))
+        createCouchDbDatabase(COUCHDB_DB);
+    }
+
+    private static void createCouchDbDatabase(String database) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + database))
                 .header("Authorization", basicAuth())
                 .PUT(HttpRequest.BodyPublishers.noBody())
                 .build();
@@ -289,7 +428,36 @@ class MigrationIntegrationTest {
     }
 
     private static void putDoc(String id, String json) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + COUCHDB_DB + "/" + id))
+        putDoc(COUCHDB_DB, id, json);
+    }
+
+    /** Creates the document and returns its revision. */
+    private static String putDocRevision(String database, String id, String json) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + database + "/" + id))
+                .header("Authorization", basicAuth())
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 201) {
+            throw new IllegalStateException("Failed to seed doc " + id + ": " + response.statusCode() + " " + response.body());
+        }
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.body()).path("rev").asText();
+    }
+
+    private static void deleteDoc(String database, String id, String revision) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + database + "/" + id + "?rev=" + revision))
+                .header("Authorization", basicAuth())
+                .DELETE()
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Failed to delete doc " + id + ": " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private static void putDoc(String database, String id, String json) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(couchDbUri("/" + database + "/" + id))
                 .header("Authorization", basicAuth())
                 .header("Content-Type", "application/json")
                 .PUT(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))

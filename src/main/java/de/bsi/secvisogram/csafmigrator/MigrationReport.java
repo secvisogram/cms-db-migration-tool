@@ -1,5 +1,6 @@
 package de.bsi.secvisogram.csafmigrator;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,6 +28,19 @@ public class MigrationReport {
             key = docId + " #" + n;
         }
         errors.put(key, message);
+    }
+
+    public Map<String, Integer> sourceCounts() {
+        return Collections.unmodifiableMap(sourceCounts);
+    }
+
+    public Map<String, Integer> insertedCounts() {
+        return Collections.unmodifiableMap(insertedCounts);
+    }
+
+    /** The rejected documents (id, or id plus a number if repeated) with the reason. */
+    public Map<String, String> errors() {
+        return Collections.unmodifiableMap(errors);
     }
 
     public int errorCount() {

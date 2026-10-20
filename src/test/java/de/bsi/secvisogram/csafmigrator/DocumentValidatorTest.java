@@ -52,6 +52,40 @@ class DocumentValidatorTest {
     }
 
     @Test
+    void keepsTheEarliestAuditTimePerAdvisoryAndComment() throws Exception {
+        String adv2 = "77777777-7777-7777-7777-777777777777";
+        add("Advisory", advisory(ADV, ""));
+        add("Advisory", advisory(adv2, ""));
+        add("Comment", comment(C1, ADV, null));
+        add("Comment", comment(C2, ADV, null));
+        // Document and workflow audits of one advisory count together, in any order.
+        add("AuditTrailDocument", audit("AuditTrailDocument", "88888888-0000-0000-0000-000000000001", "advisoryId", ADV, "2026-01-05T10:00:00Z"));
+        add("AuditTrailWorkflow", audit("AuditTrailWorkflow", "88888888-0000-0000-0000-000000000002", "advisoryId", ADV, "2026-01-02T08:30:00Z"));
+        add("AuditTrailDocument", audit("AuditTrailDocument", "88888888-0000-0000-0000-000000000003", "advisoryId", ADV, "2026-01-09T10:00:00Z"));
+        // A row that fails its own checks is not inserted, so it must not count.
+        add("AuditTrailDocument", audit("AuditTrailDocument", "88888888-0000-0000-0000-000000000004", "advisoryId", ADV, "yesterday"));
+        add("CommentAuditTrail", audit("CommentAuditTrail", "88888888-0000-0000-0000-000000000005", "commentId", C1, "2026-02-03T00:00:00Z"));
+        add("CommentAuditTrail", audit("CommentAuditTrail", "88888888-0000-0000-0000-000000000006", "commentId", C1, "2026-02-01T12:00:00Z"));
+
+        MigrationReport report = new MigrationReport();
+        DocumentValidator validator = new DocumentValidator(report);
+        byType.values().forEach(docs -> docs.forEach(validator::accept));
+        validator.finish();
+
+        assertEquals(java.time.Instant.parse("2026-01-02T08:30:00Z"), validator.advisoryCreatedAt().get(ADV));
+        assertEquals(java.time.Instant.parse("2026-02-01T12:00:00Z"), validator.commentCreatedAt().get(C1));
+        // Without audit rows there is no entry, so the database default (import time) applies.
+        assertFalse(validator.advisoryCreatedAt().containsKey(adv2));
+        assertFalse(validator.commentCreatedAt().containsKey(C2));
+    }
+
+    private static String audit(String type, String id, String parentField, String parentId, String createdAt) {
+        return """
+                {"_id": "%s", "type": "%s", "%s": "%s", "createdAt": "%s", "user": "u", "changeType": "Update"}
+                """.formatted(id, type, parentField, parentId, createdAt);
+    }
+
+    @Test
     void acceptsWellFormedDocuments() throws Exception {
         add("Advisory", advisory(ADV, ""));
         add("Comment", comment(C1, ADV, null));

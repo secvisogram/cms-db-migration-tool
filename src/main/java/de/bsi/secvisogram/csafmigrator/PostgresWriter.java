@@ -49,12 +49,16 @@ public class PostgresWriter {
         }
     }
 
-    public int insertAdvisories(List<JsonNode> docs) throws SQLException {
+    /**
+     * @param createdAtById earliest audit time per advisory id, see {@link DocumentValidator#advisoryCreatedAt()};
+     *                      an advisory without an entry gets the column default (the import time)
+     */
+    public int insertAdvisories(List<JsonNode> docs, Map<String, Instant> createdAtById) throws SQLException {
         String sql = """
                 INSERT INTO advisories
                     (id, workflow_state, owner, csaf, tracking_id, document_title, current_release_date,
-                     versioning_type, last_major_version, tmp_tracking_id)
-                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)
+                     versioning_type, last_major_version, tmp_tracking_id, created_at)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now()))
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int count = 0;
@@ -66,6 +70,7 @@ public class PostgresWriter {
                 ps.setString(8, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
                 ps.setString(9, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
                 ps.setString(10, text(doc, FieldMappings.Advisory.TMP_TRACKING_ID));
+                ps.setTimestamp(11, timestampOrNull(createdAtById.get(doc.path(FieldMappings.ID).asText())));
                 ps.addBatch();
                 count++;
             }
@@ -101,11 +106,11 @@ public class PostgresWriter {
 
     /** Pass 1: insert every comment with answer_to left NULL (a comment may reference another
      *  comment that hasn't been inserted yet). Call {@link #linkCommentAnswers} afterwards. */
-    public int insertComments(List<JsonNode> docs) throws SQLException {
+    public int insertComments(List<JsonNode> docs, Map<String, Instant> createdAtById) throws SQLException {
         String sql = """
                 INSERT INTO comments
-                    (id, advisory_id, owner, comment_text, csaf_node_id, field_name, answer_to)
-                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                    (id, advisory_id, owner, comment_text, csaf_node_id, field_name, answer_to, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, COALESCE(?::timestamptz, now()))
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int count = 0;
@@ -116,6 +121,7 @@ public class PostgresWriter {
                 ps.setString(4, text(doc, FieldMappings.Comment.TEXT));
                 ps.setString(5, text(doc, FieldMappings.Comment.CSAF_NODE_ID));
                 ps.setString(6, text(doc, FieldMappings.Comment.FIELD_NAME));
+                ps.setTimestamp(7, timestampOrNull(createdAtById.get(doc.path(FieldMappings.ID).asText())));
                 ps.addBatch();
                 count++;
             }
@@ -216,32 +222,6 @@ public class PostgresWriter {
         }
     }
 
-    /**
-     * CouchDB advisories and comments carry no creation timestamp of their own, so approximate
-     * created_at with the earliest audit-trail entry for the entity. Entities without any audit
-     * row keep the column default (import time), as do advisory_versions, which have no reliable
-     * link to a specific audit row. Call after all inserts.
-     */
-    public void backfillCreatedAt() throws SQLException {
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("""
-                    UPDATE advisories a SET created_at = t.first_seen
-                    FROM (SELECT advisory_id, min(created_at) AS first_seen FROM (
-                              SELECT advisory_id, created_at FROM audit_trail_documents
-                              UNION ALL
-                              SELECT advisory_id, created_at FROM audit_trail_workflows) x
-                          GROUP BY advisory_id) t
-                    WHERE a.id = t.advisory_id
-                    """);
-            stmt.execute("""
-                    UPDATE comments c SET created_at = t.first_seen
-                    FROM (SELECT comment_id, min(created_at) AS first_seen
-                          FROM audit_trail_comments GROUP BY comment_id) t
-                    WHERE c.id = t.comment_id
-                    """);
-        }
-    }
-
     /** Counter docs are the one exception to "_id is a UUID" -- see FieldMappings.Counter. */
     public int insertCounters(List<JsonNode> docs) throws SQLException {
         String sql = "INSERT INTO counters (id, count) VALUES (?, ?)";
@@ -307,6 +287,10 @@ public class PostgresWriter {
     private static String text(JsonNode doc, String field) {
         JsonNode value = doc.path(field);
         return value.isMissingNode() || value.isNull() ? null : value.asText();
+    }
+
+    private static Timestamp timestampOrNull(Instant instant) {
+        return instant == null ? null : Timestamp.from(instant);
     }
 
     private static Timestamp timestamp(JsonNode doc, String field) {

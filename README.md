@@ -38,6 +38,7 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 | `--dry-run` | Read CouchDB and run all validation, never touch PostgreSQL. **Run this first.** |
 | `--skip-malformed` | Load the valid documents and list the malformed ones instead of aborting |
 | `--page-size=N` | Documents read from CouchDB per request (default 500). Lower it for large documents if memory is tight. |
+| `--full-validation-read` | Validate by reading the whole documents instead of a small projection (much slower on large advisories; only for comparison) |
 
 ### Before you run it
 
@@ -80,8 +81,8 @@ offending `_id` listed.
 
 - No resume: a failure rolls back the whole transaction, and you re-run from scratch.
 - Documents are streamed, so memory use depends on the document count, not their size. The tool reads
-  CouchDB up to eight times (once to validate, once per document type), so CouchDB must not change
-  during the run.
+  a small projection of every document once to validate, then fetches each accepted document once by
+  id, so CouchDB must not change during the run.
 - Tested only against small, hand-seeded data. Try it on a copy of real data before the real cutover.
 
 ## Development

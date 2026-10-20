@@ -5,6 +5,8 @@ import de.bsi.secvisogram.csafmigrator.mapping.FieldMappings;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,12 +35,28 @@ public final class DocumentValidator {
     }
 
     private final MigrationReport report;
+    /** Ids whose csaf is a JSON object, or null when the documents are read in full and csaf is checked directly. */
+    private final Set<String> idsWithCsafObject;
+    /** Earliest audit-trail time per advisory (document and workflow audits) and per comment. */
+    private final Map<String, Instant> earliestByAdvisory = new HashMap<>();
+    private final Map<String, Instant> earliestByComment = new HashMap<>();
     private final Map<String, Integer> sourceCounts = new LinkedHashMap<>();
     private final Map<String, List<Light>> lights = new LinkedHashMap<>();
     private int documentCount;
 
+    /** For documents read in full: the csaf field is checked on each document. */
     public DocumentValidator(MigrationReport report) {
+        this(report, null);
+    }
+
+    /**
+     * For documents read as a projection without their csaf field (see
+     * {@link CouchDbClient#forEachProjectedDocument}): whether csaf is a JSON object is answered by
+     * {@code idsWithCsafObject}, the result of {@link CouchDbClient#findIdsWithCsafObject()}.
+     */
+    public DocumentValidator(MigrationReport report, Set<String> idsWithCsafObject) {
         this.report = report;
+        this.idsWithCsafObject = idsWithCsafObject;
     }
 
     /** Checks one document on its own and remembers what the referential checks need. */
@@ -60,6 +78,42 @@ public final class DocumentValidator {
             return;
         }
         lights.computeIfAbsent(type, t -> new ArrayList<>()).add(light(ObjectType.valueOf(type), doc));
+        recordAuditTime(ObjectType.valueOf(type), doc);
+    }
+
+    /**
+     * The backend's documents carry no creation time of their own that can be trusted, so an advisory's or
+     * comment's created_at is the earliest time of its audit-trail rows. The rows are all seen here, so the
+     * earliest time is kept per parent and the migrator can insert created_at directly instead of updating
+     * every row afterwards. Only rows that passed their own checks count, as only those get inserted.
+     */
+    private void recordAuditTime(ObjectType type, JsonNode doc) {
+        switch (type) {
+            case AuditTrailDocument, AuditTrailWorkflow -> earliestByAdvisory.merge(
+                    doc.path(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID).asText(), auditTime(doc), DocumentValidator::earlier);
+            case CommentAuditTrail -> earliestByComment.merge(
+                    doc.path(FieldMappings.CommentAuditTrail.COMMENT_ID).asText(), auditTime(doc), DocumentValidator::earlier);
+            default -> {
+            }
+        }
+    }
+
+    private static Instant auditTime(JsonNode doc) {
+        return Instant.parse(doc.path(FieldMappings.AuditTrailCommon.CREATED_AT).asText());
+    }
+
+    private static Instant earlier(Instant a, Instant b) {
+        return a.isBefore(b) ? a : b;
+    }
+
+    /** Earliest audit time per advisory id; an advisory without audit rows has no entry. */
+    public Map<String, Instant> advisoryCreatedAt() {
+        return Collections.unmodifiableMap(earliestByAdvisory);
+    }
+
+    /** Earliest audit time per comment id; a comment without audit rows has no entry. */
+    public Map<String, Instant> commentCreatedAt() {
+        return Collections.unmodifiableMap(earliestByComment);
     }
 
     public int documentCount() {
@@ -135,7 +189,7 @@ public final class DocumentValidator {
         };
     }
 
-    private static String checkOwnFields(String type, JsonNode doc) {
+    private String checkOwnFields(String type, JsonNode doc) {
         String id = doc.path(FieldMappings.ID).asText(null);
         if (id == null || id.isBlank()) {
             return "missing _id";
@@ -149,12 +203,12 @@ public final class DocumentValidator {
                     requiredText(doc, FieldMappings.Advisory.WORKFLOW_STATE),
                     requiredText(doc, FieldMappings.Advisory.OWNER),
                     requiredText(doc, FieldMappings.Advisory.VERSIONING_TYPE),
-                    requiredObject(doc, FieldMappings.Advisory.CSAF));
+                    csafProblem(doc));
             case AdvisoryVersion -> firstProblem(
                     requiredText(doc, FieldMappings.Advisory.WORKFLOW_STATE),
                     requiredText(doc, FieldMappings.Advisory.OWNER),
                     requiredText(doc, FieldMappings.Advisory.VERSIONING_TYPE),
-                    requiredObject(doc, FieldMappings.Advisory.CSAF),
+                    csafProblem(doc),
                     requiredUuid(doc, FieldMappings.Advisory.ADVISORY_REFERENCE));
             case Comment -> firstProblem(
                     requiredText(doc, FieldMappings.Comment.OWNER),
@@ -176,6 +230,14 @@ public final class DocumentValidator {
     }
 
     // -- helpers ---------------------------------------------------------------------------------
+
+    private String csafProblem(JsonNode doc) {
+        if (idsWithCsafObject == null) {
+            return requiredObject(doc, FieldMappings.Advisory.CSAF);
+        }
+        return idsWithCsafObject.contains(doc.path(FieldMappings.ID).asText())
+                ? null : "'" + FieldMappings.Advisory.CSAF + "' is missing or not a JSON object";
+    }
 
     private List<Light> lights(ObjectType type) {
         return lights.getOrDefault(type.name(), List.of());
