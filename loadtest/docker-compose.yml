@@ -1,0 +1,29 @@
+# Throwaway source and target databases for the load test (see README.md).
+# Host ports are unusual on purpose so they don't clash with a local CouchDB or PostgreSQL.
+services:
+  couchdb:
+    image: couchdb:3.3.3
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: admin
+    ports:
+      - "15984:5984"
+    volumes:
+      - loadtest-couchdb:/opt/couchdb/data
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: csaf
+      POSTGRES_USER: csaf
+      POSTGRES_PASSWORD: csaf
+    ports:
+      - "15432:5432"
+    volumes:
+      - loadtest-postgres:/var/lib/postgresql/data
+      # The target schema, applied once when the volume is first created.
+      - ../src/test/resources/V1__initial_schema.sql:/docker-entrypoint-initdb.d/V1__initial_schema.sql:ro
+
+volumes:
+  loadtest-couchdb:
+  loadtest-postgres:
