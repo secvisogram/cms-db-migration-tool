@@ -27,6 +27,12 @@ class MigrationConfigTest {
     }
 
     @Test
+    void progressLinesCanBeSwitchedOff() {
+        assertEquals(false, MigrationConfig.parse(DRY_RUN).quiet);
+        assertEquals(true, MigrationConfig.parse(withArg("--quiet")).quiet);
+    }
+
+    @Test
     void rejectsInvalidPageSize() {
         assertThrows(IllegalArgumentException.class, () -> MigrationConfig.parse(withArg("--page-size=0")));
         assertThrows(IllegalArgumentException.class, () -> MigrationConfig.parse(withArg("--page-size=-5")));

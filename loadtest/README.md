@@ -74,6 +74,12 @@ counter documents. The ratios can be changed on the seeder, see
 
 ## Reading the results
 
+While the migrator runs, its output (also in `loadtest/results/run-<xmx>-<page>.log`, where
+`tail -f` shows it live) has a phase header per step and a progress line every 15 seconds, for
+example `Inserted: 3,500 of 30,109 (11.6%), 115/s, about 3 min 52 s left`. The rate and the
+estimate are measured from the first document of each step, so the time spent on a preparation
+before it does not distort them.
+
 - The table printed at the end has one row per run: exit code, wall time and the highest heap
   occupancy after a garbage collection (a good proxy for the memory actually needed).
 - `loadtest/results/run-<xmx>-<page>.log` has the migrator's own output, including the time of the
@@ -103,3 +109,5 @@ Fill in after running. Hardware, CouchDB and PostgreSQL versions: see `docker-co
 | 2026-10-19 | same, migrator as a container in the Docker network | 481,746 | 1g | 500 | 243 s | 558 s + 460 s + 194 s (3 passes) | 1,904 s (31.7 min); about 450 s is outside the passes (truncate, answer links, `created_at` backfill, commit) | 488 MB | OK, all counts match, derived columns filled |
 | 2026-10-19 | same, `created_at` set at insert time (no backfill) | 481,746 | 1g | 500 | 252 s | 559 s + 466 s + 201 s (3 passes) | 1,481 s (24.7 min); commit 0.3 s, answer links 2.1 s | 463 MB | OK, all counts match, `created_at` identical to the backfill run |
 | 2026-10-20 | same, accepted documents fetched once by id in the write passes | 481,746 | 1g | 500 | 247 s | advisories 415 s, versions 398 s, comments 78 s, document audits 104 s, workflow audits 77 s, comment audits 83 s | 1,405 s (23.4 min) | 377 MB | OK, all counts match, `created_at` identical |
+| 2026-10-20 | same, with progress lines | 481,746 | 1g | 500 | 250 s (of which the csaf-object check 108 s) | advisories 410 s, versions 379 s, comments 61 s, document audits 83 s, workflow audits 61 s, comment audits 60 s | 1,305 s (21.7 min) | 426 MB | OK, all counts match, `created_at` identical |
+| 2026-10-20 | same, `--dry-run`, no whole-database check of the csaf field | 481,746 | 1g | 500 | 145 s | n/a | n/a | n/a | OK, same accepted counts as before |

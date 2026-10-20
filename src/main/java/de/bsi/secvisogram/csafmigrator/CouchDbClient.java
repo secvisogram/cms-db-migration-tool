@@ -30,15 +30,18 @@ import java.util.function.Consumer;
 public class CouchDbClient {
 
     public static final int DEFAULT_PAGE_SIZE = 500;
+    /** Documents with large csaf bodies are fetched in small chunks to bound the memory per request. */
+    static final int BODY_HEAVY_CHUNK = 50;
     private static final int MAX_ATTEMPTS = 4;
     private static final Duration INITIAL_RETRY_DELAY = Duration.ofSeconds(1);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(2);
+    private static final double SLOW_REQUEST_SECONDS = 30;
 
     /** The fields the validation pass needs, so it never has to download the large csaf documents. */
     static final List<String> PROJECTED_FIELDS = List.of("_id", "type", "workflowState", "owner", "versioningType",
             "advisoryReference", "commentText", "advisoryId", "answerTo", "createdAt", "user", "changeType",
-            "commentId", "count", "csaf.document.tracking.id");
+            "commentId", "count", "csaf.document.tracking.id", "csaf.document.title");
 
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -61,6 +64,12 @@ public class CouchDbClient {
         this.dbBaseUri = URI.create(baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl);
         String credentials = user + ":" + password;
         this.authHeader = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Receives one document at a time and may fail. */
+    @FunctionalInterface
+    public interface DocumentHandler {
+        void accept(JsonNode doc) throws Exception;
     }
 
     /** Receives one page of documents at a time. */
@@ -118,7 +127,7 @@ public class CouchDbClient {
      * megabytes, and downloading and parsing them dominates the run time; this is many times faster. Uses
      * Mango's {@code POST _find} with bookmark paging.
      */
-    public void forEachProjectedDocument(Consumer<JsonNode> handler) throws IOException, InterruptedException {
+    public void forEachProjectedDocument(DocumentHandler handler) throws Exception {
         String bookmark = null;
         while (true) {
             ObjectNode body = objectMapper.createObjectNode();
@@ -140,30 +149,18 @@ public class CouchDbClient {
     }
 
     /**
-     * Ids of the Advisory and AdvisoryVersion documents whose {@code csaf} field is a JSON object. A
-     * projection cannot tell a missing or non-object {@code csaf} from an object that lacks the projected
-     * tracking id, so the validator takes this set as the answer to "is csaf an object". The pages are
-     * dense (every hit is returned), so each request stays short.
-     *
-     * @throws HttpStatusException with status 400, 404, 405 or 501 if this CouchDB cannot run the query
+     * Of the given Advisory or AdvisoryVersion ids, those whose {@code csaf} field is a JSON object. A
+     * projection cannot tell a missing or non-object {@code csaf} from an object that has neither a tracking
+     * id nor a title, so for those few documents the answer is fetched directly, by id.
      */
-    public Set<String> findIdsWithCsafObject() throws IOException, InterruptedException {
-        Set<String> ids = new HashSet<>();
-        String bookmark = null;
-        while (true) {
-            ObjectNode body = objectMapper.createObjectNode();
-            ObjectNode selector = body.putObject("selector");
-            selector.putObject("type").putArray("$in").add("Advisory").add("AdvisoryVersion");
-            selector.putObject("csaf").put("$type", "object");
-            body.putArray("fields").add("_id");
-            JsonNode result = find(body, bookmark);
-            JsonNode docs = result.path("docs");
-            if (!docs.isArray() || docs.isEmpty()) {
-                return ids;
+    public Set<String> findIdsWithCsafObject(List<String> ids) throws Exception {
+        Set<String> withCsafObject = new HashSet<>();
+        forEachByIds(ids, BODY_HEAVY_CHUNK, page -> page.forEach(doc -> {
+            if (doc.path("csaf").isObject()) {
+                withCsafObject.add(doc.path("_id").asText());
             }
-            docs.forEach(doc -> ids.add(doc.path("_id").asText()));
-            bookmark = result.path("bookmark").asText(null);
-        }
+        }));
+        return withCsafObject;
     }
 
     /**
@@ -199,6 +196,17 @@ public class CouchDbClient {
                 handler.accept(docs);
             }
         }
+    }
+
+    /** The number of documents in the database (design documents included), from the database info. */
+    public long documentCount() throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(dbBaseUri)
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .timeout(REQUEST_TIMEOUT)
+                .GET()
+                .build();
+        return sendWithRetry(request).path("doc_count").asLong(0);
     }
 
     private JsonNode find(ObjectNode body, String bookmark) throws IOException, InterruptedException {
@@ -237,7 +245,13 @@ public class CouchDbClient {
     private JsonNode sendWithRetry(HttpRequest request) throws IOException, InterruptedException {
         for (int attempt = 1; ; attempt++) {
             try {
-                return fetchOnce(request);
+                long startedAt = System.nanoTime();
+                JsonNode result = fetchOnce(request);
+                double seconds = (System.nanoTime() - startedAt) / 1e9;
+                if (seconds >= SLOW_REQUEST_SECONDS) {
+                    System.out.printf(java.util.Locale.ROOT, "  CouchDB is slow: one request took %.0f s.%n", seconds);
+                }
+                return result;
             } catch (TransientFailure e) {
                 if (attempt == MAX_ATTEMPTS) {
                     throw new IOException("CouchDB request failed after " + MAX_ATTEMPTS + " attempts: "

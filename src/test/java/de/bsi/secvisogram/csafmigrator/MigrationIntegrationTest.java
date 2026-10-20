@@ -194,9 +194,13 @@ class MigrationIntegrationTest {
         assertEquals(9, docs.stream().map(d -> d.path("_id").asText()).collect(java.util.stream.Collectors.toSet()).size());
         JsonNode advisory = docs.stream().filter(d -> d.path("_id").asText().equals(ADVISORY_ID)).findFirst().orElseThrow();
         assertEquals("TEST-001", advisory.path("csaf").path("document").path("tracking").path("id").asText());
-        assertFalse(advisory.path("csaf").path("document").has("title"), "the csaf body must not be downloaded");
+        // Only the tracking id and the title come with the projection, not the rest of the csaf body.
+        assertEquals("Test Advisory", advisory.path("csaf").path("document").path("title").asText());
+        assertEquals(2, advisory.path("csaf").path("document").size(), "the csaf body must not be downloaded");
 
-        assertEquals(java.util.Set.of(ADVISORY_ID, ADVISORY_VERSION_ID), client.findIdsWithCsafObject());
+        // Of these three, only the advisory and its version have a csaf object; the comment has none.
+        assertEquals(java.util.Set.of(ADVISORY_ID, ADVISORY_VERSION_ID),
+                client.findIdsWithCsafObject(List.of(ADVISORY_ID, ADVISORY_VERSION_ID, COMMENT_ID)));
     }
 
     @Test
@@ -286,6 +290,7 @@ class MigrationIntegrationTest {
 
         assertEquals(9, ids.size());
         assertEquals(9, new HashSet<>(ids).size(), "a document was returned more than once");
+        assertEquals(9, client.documentCount());
     }
 
     private static String listColumns(Connection conn, String table, String id) throws Exception {

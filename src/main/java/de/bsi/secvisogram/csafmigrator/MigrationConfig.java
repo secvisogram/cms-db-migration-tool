@@ -24,6 +24,8 @@ public class MigrationConfig {
     public final int pageSize;
     /** Validate by reading the whole documents instead of a small projection (slow, for comparison). */
     public final boolean fullValidationRead;
+    /** Do not print progress lines during the long steps (the phase and result lines stay). */
+    public final boolean quiet;
 
     /** Direct construction, e.g. from a test wiring up Testcontainers endpoints -- no CLI
      *  parsing involved. */
@@ -52,11 +54,19 @@ public class MigrationConfig {
     public MigrationConfig(String couchdbUrl, String couchdbUser, String couchdbPassword,
                             String pgUrl, String pgUser, String pgPassword, boolean skipMalformed, boolean dryRun,
                             int pageSize, boolean fullValidationRead) {
+        this(couchdbUrl, couchdbUser, couchdbPassword, pgUrl, pgUser, pgPassword, skipMalformed, dryRun, pageSize,
+                fullValidationRead, false);
+    }
+
+    public MigrationConfig(String couchdbUrl, String couchdbUser, String couchdbPassword,
+                            String pgUrl, String pgUser, String pgPassword, boolean skipMalformed, boolean dryRun,
+                            int pageSize, boolean fullValidationRead, boolean quiet) {
         if (pageSize < 1) {
             throw usage("--page-size must be a positive number");
         }
         this.pageSize = pageSize;
         this.fullValidationRead = fullValidationRead;
+        this.quiet = quiet;
         this.skipMalformed = skipMalformed;
         this.dryRun = dryRun;
         this.couchdbUrl = couchdbUrl;
@@ -72,13 +82,14 @@ public class MigrationConfig {
                 requireUnlessDryRun(args, "pg-url"), requireUnlessDryRun(args, "pg-user"),
                 requireUnlessDryRun(args, "pg-password"),
                 args.containsKey("skip-malformed"), args.containsKey("dry-run"), pageSize(args),
-                args.containsKey("full-validation-read"));
+                args.containsKey("full-validation-read"), args.containsKey("quiet"));
     }
 
     public static MigrationConfig parse(String[] argv) {
         Map<String, String> args = new HashMap<>();
         for (String arg : argv) {
-            if (arg.equals("--skip-malformed") || arg.equals("--dry-run") || arg.equals("--full-validation-read")) {
+            if (arg.equals("--skip-malformed") || arg.equals("--dry-run") || arg.equals("--full-validation-read")
+                    || arg.equals("--quiet")) {
                 args.put(arg.substring(2), "true");
                 continue;
             }
@@ -127,13 +138,14 @@ public class MigrationConfig {
                     --pg-url=jdbc:postgresql://new-host:5432/csaf \\
                     --pg-user=csaf \\
                     --pg-password=secret \\
-                    [--skip-malformed] [--dry-run] [--page-size=500] [--full-validation-read]
+                    [--skip-malformed] [--dry-run] [--page-size=500] [--full-validation-read] [--quiet]
 
                 By default any malformed document aborts the run before anything is written.
                 --dry-run only reads CouchDB and validates; the --pg-* arguments are then not needed.
                 --skip-malformed loads the valid documents and reports the rest (exit code stays 1).
                 --page-size is how many documents are read from CouchDB per request (default 500).
                 Lower it if the documents are large and the tool runs out of memory.
+                --quiet leaves out the progress lines printed every 15 seconds during the long steps.
                 --full-validation-read validates by reading the whole documents. By default only the small
                 fields are read, which is many times faster on large advisories.
                 """);

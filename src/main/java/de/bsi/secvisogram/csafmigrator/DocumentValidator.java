@@ -35,8 +35,10 @@ public final class DocumentValidator {
     }
 
     private final MigrationReport report;
-    /** Ids whose csaf is a JSON object, or null when the documents are read in full and csaf is checked directly. */
-    private final Set<String> idsWithCsafObject;
+    /** True when documents come as a projection without their csaf field (see CouchDbClient#forEachProjectedDocument). */
+    private final boolean projected;
+    /** In projected mode: of the documents handed to {@link #acceptChecked}, those whose csaf is an object. */
+    private Set<String> checkedCsafObjects = Set.of();
     /** Earliest audit-trail time per advisory (document and workflow audits) and per comment. */
     private final Map<String, Instant> earliestByAdvisory = new HashMap<>();
     private final Map<String, Instant> earliestByComment = new HashMap<>();
@@ -46,17 +48,42 @@ public final class DocumentValidator {
 
     /** For documents read in full: the csaf field is checked on each document. */
     public DocumentValidator(MigrationReport report) {
-        this(report, null);
+        this(report, false);
     }
 
     /**
-     * For documents read as a projection without their csaf field (see
-     * {@link CouchDbClient#forEachProjectedDocument}): whether csaf is a JSON object is answered by
-     * {@code idsWithCsafObject}, the result of {@link CouchDbClient#findIdsWithCsafObject()}.
+     * @param projected whether the documents come as a projection, without their csaf field. A csaf field
+     *                  that shows up in the projection is an object; for the few documents where it does
+     *                  not, see {@link #needsCsafCheck} and {@link #acceptChecked}.
      */
-    public DocumentValidator(MigrationReport report, Set<String> idsWithCsafObject) {
+    public DocumentValidator(MigrationReport report, boolean projected) {
         this.report = report;
-        this.idsWithCsafObject = idsWithCsafObject;
+        this.projected = projected;
+    }
+
+    /**
+     * Projected mode: whether the projection of this advisory or version cannot say if its csaf is an object,
+     * because neither the tracking id nor the title (the fields that are projected from csaf) came with it.
+     * Such a document has to be checked directly, see {@link #acceptChecked}.
+     */
+    public boolean needsCsafCheck(JsonNode doc) {
+        if (!projected) {
+            return false;
+        }
+        String type = doc.path(FieldMappings.TYPE).asText(null);
+        return (ObjectType.Advisory.name().equals(type) || ObjectType.AdvisoryVersion.name().equals(type))
+                && !doc.path(FieldMappings.Advisory.CSAF).isObject();
+    }
+
+    /**
+     * Accepts documents for which {@link #needsCsafCheck} was true, after their csaf was checked directly.
+     *
+     * @param idsWithCsafObject the ids among {@code docs} whose csaf is a JSON object
+     */
+    public void acceptChecked(List<JsonNode> docs, Set<String> idsWithCsafObject) {
+        checkedCsafObjects = idsWithCsafObject;
+        docs.forEach(this::accept);
+        checkedCsafObjects = Set.of();
     }
 
     /** Checks one document on its own and remembers what the referential checks need. */
@@ -232,10 +259,12 @@ public final class DocumentValidator {
     // -- helpers ---------------------------------------------------------------------------------
 
     private String csafProblem(JsonNode doc) {
-        if (idsWithCsafObject == null) {
+        if (!projected) {
             return requiredObject(doc, FieldMappings.Advisory.CSAF);
         }
-        return idsWithCsafObject.contains(doc.path(FieldMappings.ID).asText())
+        // In a projection, a csaf field is there only if it is an object that has a projected field.
+        return doc.path(FieldMappings.Advisory.CSAF).isObject()
+                || checkedCsafObjects.contains(doc.path(FieldMappings.ID).asText())
                 ? null : "'" + FieldMappings.Advisory.CSAF + "' is missing or not a JSON object";
     }
 

@@ -39,6 +39,7 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 | `--skip-malformed` | Load the valid documents and list the malformed ones instead of aborting |
 | `--page-size=N` | Documents read from CouchDB per request (default 500). Lower it for large documents if memory is tight. |
 | `--full-validation-read` | Validate by reading the whole documents instead of a small projection (much slower on large advisories; only for comparison) |
+| `--quiet` | Leave out the progress lines printed every 15 seconds during the long steps (the phase and result lines stay) |
 
 ### Before you run it
 

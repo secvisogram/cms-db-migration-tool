@@ -53,7 +53,10 @@ public final class Migrator {
         // unless --skip-malformed was given; duplicate tracking IDs always abort, since there is no
         // way to know which of the clashing advisories should win.
         MigrationReport report = new MigrationReport();
-        DocumentValidator validator = readAndValidate(couchDb, config, report);
+        long documentCount = couchDb.documentCount();
+        System.out.println("Phase 1 of 2: validating " + Progress.count(documentCount) + " documents.");
+        DocumentValidator validator = readAndValidate(couchDb, config, report,
+                new Progress("Validated", documentCount, !config.quiet));
         System.out.println("Read " + validator.documentCount() + " documents (validation pass took "
                 + secondsSince(startedAt) + ").");
         validator.sourceCounts().forEach(report::recordSource);
@@ -74,6 +77,7 @@ public final class Migrator {
 
         // Phase 2: write. created_at of advisories and comments is inserted directly, from the earliest
         // audit-trail time the validation pass saw, so no slow UPDATE of the rows is needed afterwards.
+        System.out.println("Phase 2 of 2: writing to PostgreSQL.");
         Map<String, Instant> advisoryCreatedAt = validator.advisoryCreatedAt();
         Map<String, Instant> commentCreatedAt = validator.commentCreatedAt();
         try (Connection connection = DriverManager.getConnection(config.pgUrl, connectionProperties(config))) {
@@ -91,6 +95,8 @@ public final class Migrator {
                         continue;
                     }
                     long passStartedAt = System.nanoTime();
+                    System.out.println(type + ": loading " + Progress.count(acceptedIds.size()) + " documents.");
+                    Progress progress = new Progress("Inserted", acceptedIds.size(), !config.quiet);
                     // Fetch exactly the accepted documents of this type, by id: each document is downloaded
                     // once instead of once per pass. Sorted ids keep neighbouring documents together.
                     List<String> ids = new ArrayList<>(acceptedIds);
@@ -107,6 +113,7 @@ public final class Migrator {
                             return;
                         }
                         inserted[0] += insert(writer, type, batch, advisoryCreatedAt, commentCreatedAt);
+                        progress.advance(batch.size());
                         if (type == ObjectType.Comment) {
                             for (JsonNode doc : batch) {
                                 JsonNode answerTo = doc.path(FieldMappings.Comment.ANSWER_TO);
@@ -164,28 +171,62 @@ public final class Migrator {
      * large csaf bodies; falls back to reading whole documents if this CouchDB cannot run the query.
      */
     private static DocumentValidator readAndValidate(CouchDbClient couchDb, MigrationConfig config,
-                                                     MigrationReport report) throws Exception {
+                                                     MigrationReport report, Progress progress) throws Exception {
         if (!config.fullValidationRead) {
-            Set<String> idsWithCsafObject = null;
+            DocumentValidator validator = new DocumentValidator(report, true);
+            // Advisories and versions whose csaf the projection cannot vouch for are rare; they are collected
+            // and checked directly, by id, in small batches.
+            List<JsonNode> needCheck = new ArrayList<>();
+            long[] checked = {0};
+            boolean[] started = {false};
+            long checkStartedAt = System.nanoTime();
             try {
-                idsWithCsafObject = couchDb.findIdsWithCsafObject();
+                couchDb.forEachProjectedDocument(doc -> {
+                    started[0] = true;
+                    if (validator.needsCsafCheck(doc)) {
+                        needCheck.add(doc);
+                        if (needCheck.size() >= config.pageSize) {
+                            checked[0] += checkCsaf(couchDb, validator, needCheck);
+                        }
+                    } else {
+                        validator.accept(doc);
+                    }
+                    progress.advance(1);
+                });
+                checked[0] += checkCsaf(couchDb, validator, needCheck);
+                if (checked[0] > 0) {
+                    System.out.println("  Checked the csaf field of " + Progress.count(checked[0])
+                            + " advisories and versions directly, by id.");
+                }
+                return validator;
             } catch (CouchDbClient.HttpStatusException e) {
                 int status = e.status();
-                if (status != 400 && status != 404 && status != 405 && status != 501) {
+                if (started[0] || (status != 400 && status != 404 && status != 405 && status != 501)) {
                     throw e;
                 }
                 System.out.println("This CouchDB cannot run the projected read (HTTP " + status
                         + "); reading the whole documents instead, which is much slower.");
             }
-            if (idsWithCsafObject != null) {
-                DocumentValidator validator = new DocumentValidator(report, idsWithCsafObject);
-                couchDb.forEachProjectedDocument(validator::accept);
-                return validator;
-            }
         }
         DocumentValidator validator = new DocumentValidator(report);
-        couchDb.forEachDocument(validator::accept);
+        couchDb.forEachDocument(doc -> {
+            validator.accept(doc);
+            progress.advance(1);
+        });
         return validator;
+    }
+
+    /** Checks the csaf field of the collected documents directly and hands them to the validator. */
+    private static int checkCsaf(CouchDbClient couchDb, DocumentValidator validator, List<JsonNode> needCheck)
+            throws Exception {
+        if (needCheck.isEmpty()) {
+            return 0;
+        }
+        List<String> ids = needCheck.stream().map(doc -> doc.path(FieldMappings.ID).asText()).sorted().toList();
+        validator.acceptChecked(needCheck, couchDb.findIdsWithCsafObject(ids));
+        int count = needCheck.size();
+        needCheck.clear();
+        return count;
     }
 
     private static int chunkSize(ObjectType type, int pageSize) {
