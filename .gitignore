@@ -5,3 +5,5 @@ target/
 dependency-reduced-pom.xml
 loadtest/data/
 loadtest/results/
+# Filled in from .env.example, holds passwords
+.env

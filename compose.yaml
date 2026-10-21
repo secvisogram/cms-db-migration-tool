@@ -1,0 +1,123 @@
+# One-time migration of data from the CouchDB-based CMS releases (<= 1.1.6) to PostgreSQL.
+#
+# Self-contained: it does not depend on the backend's compose file. It starts a temporary
+# CouchDB on a COPY of the old data (the original is never opened) and runs the migration tool
+# against a PostgreSQL that is already running. The service schema-init creates the new schema
+# there first if it is missing, so the new backend does not have to be started before.
+#
+# Configure through environment variables or a .env file next to this file, see .env.example.
+# Variables without a default are required: CSAF_COUCHDB_DATA_DIR, CSAF_BACKEND_IMAGE, CSAF_DB_NAME,
+# CSAF_DB_USER and CSAF_DB_PASSWORD. Compose checks the whole file for every command, so it refuses to run ANY of
+# them (the dry run and "down" included) until they are set.
+#
+# All services belong to the profile "migrate" ON PURPOSE: a plain "docker compose up" must not
+# start them, because db-migration replaces the contents of the target database. Naming a
+# service on the command line enables its profile, so no --profile flag is needed.
+#
+#   docker compose run --rm db-migration-dry-run   # validate only, never touches PostgreSQL
+#   (stop the new backend so nothing writes during the migration)
+#   docker compose run --rm db-migration           # the real migration
+#   docker compose down -v                         # clean up the scratch copy afterwards
+
+name: csaf-cms-migration
+
+services:
+  # Copies the old CouchDB data folder into a scratch volume. Re-running replaces the copy.
+  old-couchdb-copy:
+    image: busybox:1.37
+    profiles: ["migrate"]
+    restart: "no"
+    volumes:
+      # Folder with the old CouchDB data (e.g. docker/data/cms-db of the old checkout).
+      - "${CSAF_COUCHDB_DATA_DIR:?set CSAF_COUCHDB_DATA_DIR to the old CouchDB data folder}:/source:ro"
+      - old-couchdb-data:/data
+    command: ["sh", "-c", "rm -rf /data/* /data/.[!.]* 2>/dev/null; cp -a /source/. /data/"]
+
+  # Temporary CouchDB on the scratch copy. Not published to the host.
+  old-couchdb:
+    image: couchdb:3.4
+    profiles: ["migrate"]
+    restart: "no"
+    environment:
+      # The credentials of the OLD installation.
+      COUCHDB_USER: ${CSAF_COUCHDB_USER:-admin}
+      COUCHDB_PASSWORD: ${CSAF_COUCHDB_PASSWORD:-admin}
+    volumes:
+      - old-couchdb-data:/opt/couchdb/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:5984/_up || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    depends_on:
+      old-couchdb-copy:
+        condition: service_completed_successfully
+
+  # Step 1: read and validate only, never touches PostgreSQL.
+  db-migration-dry-run:
+    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.3}
+    profiles: ["migrate"]
+    restart: "no"
+    # The image's entrypoint is "java -jar /app/migrator.jar"; these are its arguments.
+    command:
+      - --dry-run
+      - --couchdb-url=http://old-couchdb:5984/${CSAF_COUCHDB_DBNAME:-csaf}
+      - --couchdb-user=${CSAF_COUCHDB_USER:-admin}
+      - --couchdb-password=${CSAF_COUCHDB_PASSWORD:-admin}
+    depends_on:
+      old-couchdb:
+        condition: service_healthy
+
+  # Makes sure the target database has the schema of the new backend. It starts the image of the new
+  # backend once, without web server and scheduler, so that the backend's own Flyway migration
+  # creates the tables, and the container ends. If the schema is already there it changes nothing; a
+  # schema from an older, different version of the backend makes it fail (see the guide).
+  # CSAF_BACKEND_IMAGE must be the image of the backend release you are upgrading to, the one that
+  # "backend-cms" uses in the backend's compose file, so that the schema is the one that backend expects.
+  # The real migration waits for it. Its output is not shown by "run": use "docker compose logs schema-init".
+  schema-init:
+    image: ${CSAF_BACKEND_IMAGE:?set CSAF_BACKEND_IMAGE to the image of the new backend (the image of backend-cms in the backend's compose file)}
+    profiles: ["migrate"]
+    restart: "no"
+    # Lets "host.docker.internal" resolve on Linux too (Docker Desktop provides it already).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      CSAF_DB_HOST: ${CSAF_DB_HOST:-host.docker.internal}
+      CSAF_DB_PORT: ${CSAF_DB_PORT:-5432}
+      CSAF_DB_NAME: ${CSAF_DB_NAME:?set CSAF_DB_NAME to the database name of the new backend}
+      CSAF_DB_USER: ${CSAF_DB_USER:?set CSAF_DB_USER to the PostgreSQL user of the new backend}
+      CSAF_DB_PASSWORD: ${CSAF_DB_PASSWORD:?set CSAF_DB_PASSWORD to the PostgreSQL password of the new backend}
+      # This one-off start must not publish anything.
+      CSAF_AUTOPUBLISH_ENABLED: "false"
+    command:
+      - --spring.main.web-application-type=none
+      - --spring.task.scheduling.enabled=false
+
+  # Step 2: the real migration into the target database (its schema is created by schema-init if needed).
+  # Extra options can be appended, e.g. "docker compose run --rm db-migration --skip-malformed".
+  # Both steps accept "--page-size=N" (documents read from CouchDB per request, default 500).
+  db-migration:
+    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.3}
+    profiles: ["migrate"]
+    restart: "no"
+    # Lets "host.docker.internal" resolve on Linux too (Docker Desktop provides it already).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The image's entrypoint is "java -jar /app/migrator.jar"; these are its arguments.
+    command:
+      - --couchdb-url=http://old-couchdb:5984/${CSAF_COUCHDB_DBNAME:-csaf}
+      - --couchdb-user=${CSAF_COUCHDB_USER:-admin}
+      - --couchdb-password=${CSAF_COUCHDB_PASSWORD:-admin}
+      - --pg-url=jdbc:postgresql://${CSAF_DB_HOST:-host.docker.internal}:${CSAF_DB_PORT:-5432}/${CSAF_DB_NAME:?set CSAF_DB_NAME to the database name of the new backend}
+      - --pg-user=${CSAF_DB_USER:?set CSAF_DB_USER to the PostgreSQL user of the new backend}
+      - --pg-password=${CSAF_DB_PASSWORD:?set CSAF_DB_PASSWORD to the PostgreSQL password of the new backend}
+    depends_on:
+      old-couchdb:
+        condition: service_healthy
+      schema-init:
+        condition: service_completed_successfully
+
+volumes:
+  # Scratch copy of the old CouchDB data.
+  old-couchdb-data:

@@ -1,10 +1,31 @@
 # CSAF CouchDB → PostgreSQL Migrator
 
 One-shot tool that copies all data of a `csaf-cms-backend` installation from CouchDB (releases up to
-`v1.1.6`) into the PostgreSQL schema used by later releases. It reads CouchDB over plain HTTP and
-batch-inserts everything into PostgreSQL in a single transaction.
+`v1.1.6`) into the PostgreSQL schema used by later releases (2.0.0 and newer). It reads CouchDB over
+plain HTTP and batch-inserts everything into PostgreSQL in a single transaction.
 
-## Get the tool
+## Upgrading a csaf-cms-backend installation? Start here
+
+**Follow the upgrade guide: [docs/upgrade-from-couchdb.md](docs/upgrade-from-couchdb.md).** You normally
+do not run the tool by hand. The guide uses the [`compose.yaml`](compose.yaml) of this repository, which
+
+- starts a temporary CouchDB on a **copy** of your old data (your original data is never opened),
+- creates the new database schema in your PostgreSQL if it is not there yet,
+- runs the tool as a container: first a dry run that changes nothing, then the real migration.
+
+All you need is Docker and the two files `compose.yaml` and `.env.example`. No Java, nothing to build.
+
+If you use your own compose file, no Docker, or the plain jar, follow
+[docs/upgrade-from-couchdb-custom-setup.md](docs/upgrade-from-couchdb-custom-setup.md) instead.
+
+Everything below is reference: how to run the tool by hand and how it works.
+
+## Running the tool by hand (reference)
+
+For the custom setup guide, for tests, or if you know what you are doing. In an upgrade, the guide above
+does these steps for you.
+
+### Get the tool
 
 Pick one:
 
@@ -12,7 +33,7 @@ Pick one:
   with `mvn package` (result: `target/csaf-couchdb-postgres-migrator.jar`).
 - **Docker image**: `ghcr.io/secvisogram/cms-db-migration-tool`
 
-## Usage
+### Usage
 
 ```bash
 java -jar csaf-couchdb-postgres-migrator.jar \
@@ -43,7 +64,8 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 
 ### Before you run it
 
-- The target database must already have the `csaf-cms-backend` schema (its Flyway migration creates it).
+- The target database must already have the `csaf-cms-backend` schema (its Flyway migration creates it; the
+  `schema-init` service of [`compose.yaml`](compose.yaml) does that for you when you use it).
 - **All target tables are truncated before loading.** Safe to re-run, but never point it at a database
   holding data you want to keep.
 - Ideally run it against a copy of the old data, not the live CouchDB.
@@ -52,9 +74,6 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 
 At the end it prints a source-count vs. inserted-count report per document type. A non-zero exit code
 means a mismatch or error: **do not cut over**.
-
-For a full `csaf-cms-backend` upgrade you normally don't run this by hand; use the `migrate` compose
-profile and guide in that project (`documents/couchdb-to-postgres-migration-guides/upgrade-from-couchdb.md`).
 
 ## What gets migrated
 
@@ -84,7 +103,9 @@ offending `_id` listed.
 - Documents are streamed, so memory use depends on the document count, not their size. The tool reads
   a small projection of every document once to validate, then fetches each accepted document once by
   id, so CouchDB must not change during the run.
-- Tested only against small, hand-seeded data. Try it on a copy of real data before the real cutover.
+- Load tested with 481,746 documents (30,109 real Red Hat CSAF advisories plus generated versions, comments
+  and audit rows): about 22 minutes, see [loadtest/README.md](loadtest/README.md). It has not been run on
+  real production data, so try it on a copy of your data before the real cutover.
 
 ## Development
 
