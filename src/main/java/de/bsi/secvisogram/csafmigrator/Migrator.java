@@ -235,7 +235,7 @@ public final class Migrator {
     }
 
     private static String secondsSince(long startedAtNanos) {
-        return String.format("%.1f s", (System.nanoTime() - startedAtNanos) / 1_000_000_000.0);
+        return Progress.elapsed((System.nanoTime() - startedAtNanos) / 1_000_000_000.0);
     }
 
     private static int insert(PostgresWriter writer, ObjectType type, List<JsonNode> docs,

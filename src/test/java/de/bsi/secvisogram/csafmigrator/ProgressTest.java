@@ -102,6 +102,17 @@ class ProgressTest {
     }
 
     @Test
+    void formatsElapsedTimesOfResultLinesWithMinutesFromOneMinuteOn() {
+        assertEquals("0.0 s", Progress.elapsed(0));
+        assertEquals("45.2 s", Progress.elapsed(45.2));
+        assertEquals("1 min", Progress.elapsed(59.97));
+        assertEquals("3 min", Progress.elapsed(180));
+        assertEquals("3 min 33 s", Progress.elapsed(212.8));
+        assertEquals("21 min 56 s", Progress.elapsed(1316.1));
+        assertEquals("1 h 5 min", Progress.elapsed(3900));
+    }
+
+    @Test
     void formatsDurationsAndCounts() {
         assertEquals("45 s", Progress.duration(45));
         assertEquals("1 min 30 s", Progress.duration(90));

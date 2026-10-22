@@ -63,7 +63,16 @@ loadtest/run.sh --dry-run
 | `--dry-run` | Run the migrator with `--dry-run` |
 
 Seeding is skipped when the CouchDB database already has documents, so repeated runs only re-run the
-migrator. Use `--reset` after changing `--limit` or `--copies`.
+migrator. Use `--reset` after changing `--limit` or `--copies`, which deletes the seeded data.
+
+To keep several data sets, for example the full one and a smaller one, give each its own CouchDB database
+with the environment variable `COUCH_DB` (default `csaf_load`) and run without `--reset`:
+
+```bash
+COUCH_DB=csaf_load_10k loadtest/run.sh --limit=10000 --xmx=1g
+```
+
+The PostgreSQL side is shared: every run truncates it first and loads the data set it is run with.
 
 ## What gets generated
 
@@ -97,7 +106,8 @@ Run the migrator as a container on the Docker network (the default of `run.sh`).
 through the published ports, reading from CouchDB was measured at only 2.5 to 3 MB/s and did not speed
 up with parallel readers, against 41 MB/s with one reader and about 145 MB/s with four inside the
 network. Host numbers are therefore not comparable. PostgreSQL took about 5 ms per 126 KB advisory
-(200 advisories/s); dropping the GIN index on `csaf` made that about 310/s.
+(200 advisories/s); dropping the GIN index on `csaf` made that about 310/s. That was a test with 600 advisories;
+in the full migration the index cost much more, because its cost grows with its size (see the last two rows).
 
 Fill in after running. Hardware, CouchDB and PostgreSQL versions: see `docker-compose.yml`.
 
@@ -111,3 +121,8 @@ Fill in after running. Hardware, CouchDB and PostgreSQL versions: see `docker-co
 | 2026-10-20 | same, accepted documents fetched once by id in the write passes | 481,746 | 1g | 500 | 247 s | advisories 415 s, versions 398 s, comments 78 s, document audits 104 s, workflow audits 77 s, comment audits 83 s | 1,405 s (23.4 min) | 377 MB | OK, all counts match, `created_at` identical |
 | 2026-10-20 | same, with progress lines | 481,746 | 1g | 500 | 250 s (of which the csaf-object check 108 s) | advisories 410 s, versions 379 s, comments 61 s, document audits 83 s, workflow audits 61 s, comment audits 60 s | 1,305 s (21.7 min) | 426 MB | OK, all counts match, `created_at` identical |
 | 2026-10-20 | same, `--dry-run`, no whole-database check of the csaf field | 481,746 | 1g | 500 | 145 s | n/a | n/a | n/a | OK, same accepted counts as before |
+| 2026-10-22 | same, GIN index `idx_advisories_csaf` present (schema unchanged) | 481,746 | 1g | 500 | 169 s | advisories 469 s, versions 399 s, comments 66 s, document audits 86 s, workflow audits 62 s, comment audits 62 s | 1,316 s (21 min 56 s) | 388 MB | OK, all counts match |
+| 2026-10-22 | same, index dropped before the run | 481,746 | 1g | 500 | 147 s | advisories 213 s, versions 410 s, comments 64 s, document audits 86 s, workflow audits 65 s, comment audits 63 s | 1,052 s (17 min 32 s) | 380 MB | OK, all counts match |
+
+The two runs differ only by the index. It exists on `advisories` only, so the versions (which also carry a
+`csaf` document) do not change: the whole difference of 264 s is the advisory pass, 8.5 ms per advisory.

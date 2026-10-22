@@ -85,6 +85,21 @@ final class Progress {
         return String.format(Locale.ROOT, "%,d", number);
     }
 
+    /** An elapsed time for a result line: "45.2 s", "3 min 33 s" from one minute on, "1 h 5 min" from one hour. */
+    static String elapsed(double seconds) {
+        if (seconds < 59.95) {
+            return String.format(Locale.ROOT, "%.1f s", seconds);
+        }
+        long total = Math.round(seconds);
+        if (total < 3600) {
+            long minutes = total / 60;
+            long rest = total % 60;
+            return rest == 0 ? minutes + " min" : minutes + " min " + rest + " s";
+        }
+        long minutes = Math.round(seconds / 60);
+        return (minutes / 60) + " h " + (minutes % 60) + " min";
+    }
+
     /** "45 s", "1 min 30 s" below ten minutes, "25 min" below an hour, then "1 h 5 min". */
     static String duration(double seconds) {
         long rounded = Math.round(seconds);

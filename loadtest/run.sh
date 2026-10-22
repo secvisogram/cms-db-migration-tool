@@ -42,7 +42,9 @@ done
 
 COMPOSE="docker compose -f loadtest/docker-compose.yml"
 COUCH_BASE="http://127.0.0.1:15984"
-COUCH_DB="csaf_load"
+# The CouchDB database to seed and migrate from. Use another name (COUCH_DB=csaf_load_10k loadtest/run.sh ...)
+# to keep a second data set next to the first one in the same CouchDB volume.
+COUCH_DB="${COUCH_DB:-csaf_load}"
 COUCH_AUTH="admin:admin"
 JAR="target/csaf-couchdb-postgres-migrator.jar"
 RESULTS="loadtest/results"
