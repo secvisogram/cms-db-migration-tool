@@ -1,0 +1,52 @@
+# Builds the project and runs all tests (including the Testcontainers integration test) on every push
+# to main and on pull requests. Publishing to a release is done by the Jar and Docker Image workflows.
+
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes a running build obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # The default image on purpose: the Testcontainers integration test depends on the Docker version of
+    # the runner (Docker 29 on ubuntu-26.04 needs Testcontainers 1.21.4 or newer), and this way a change of
+    # the default image shows up here on the next push, not first when a release is built.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Show the Docker version
+        run: docker version --format 'client {{.Client.Version}}, server {{.Server.Version}}'
+
+      - name: Build and test
+        run: mvn -B verify
+
+      # The log alone does not say why Testcontainers rejects a Docker environment; the reports do.
+      - name: Keep the test reports of a failed build
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+          if-no-files-found: ignore
