@@ -22,7 +22,10 @@ public class MigrationConfig {
     public final boolean dryRun;
     /** Documents fetched from CouchDB per request; bounds how many full documents are in memory. */
     public final int pageSize;
-    /** Validate by reading the whole documents instead of a small projection (slow, for comparison). */
+    /**
+     * Validate by reading the whole documents instead of a small projection of the required fields
+     * (slow, for comparison).
+     */
     public final boolean fullValidationRead;
     /** Do not print progress lines during the long steps (the phase and result lines stay). */
     public final boolean quiet;
@@ -146,8 +149,8 @@ public class MigrationConfig {
                 --page-size is how many documents are read from CouchDB per request (default 500).
                 Lower it if the documents are large and the tool runs out of memory.
                 --quiet leaves out the progress lines printed every 15 seconds during the long steps.
-                --full-validation-read validates by reading the whole documents. By default only the small
-                fields are read, which is many times faster on large advisories.
+                --full-validation-read validates by reading the whole documents. By default only a small projection
+                of the required fields is read, which is many times faster on large advisories.
                 """);
     }
 }

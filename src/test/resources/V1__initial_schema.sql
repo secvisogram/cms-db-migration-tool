@@ -1,6 +1,7 @@
 -- Reference copy of csaf-cms-backend's V1__initial_schema.sql (branch feat/couchdb-to-postgres-migration-performace,
--- commit b76b0ae, synced 2026-10-15). Test fixture only: in a real run the target schema is owned by the backend's
--- Flyway migrations. Re-sync from the source of truth if it diverges.
+-- commit b76b0ae, synced 2026-10-15, then without the GIN index idx_advisories_csaf, synced 2026-10-23). Test
+-- fixture only: in a real run the target schema is owned by the backend's Flyway migrations. Re-sync from the
+-- source of truth if it diverges.
 
 -- V1__initial_schema.sql
 -- Initial PostgreSQL schema for CSAF CMS Backend
@@ -105,7 +106,6 @@ CREATE INDEX idx_advisories_owner ON advisories (owner);
 CREATE UNIQUE INDEX idx_advisories_tracking_id ON advisories (tracking_id);
 CREATE INDEX idx_advisories_workflow_state_release_date
     ON advisories (workflow_state, current_release_date);
-CREATE INDEX idx_advisories_csaf ON advisories USING GIN (csaf jsonb_path_ops);
 CREATE INDEX idx_advisory_versions_advisory_id ON advisory_versions (advisory_id);
 CREATE INDEX idx_audit_trail_documents_advisory_id ON audit_trail_documents (advisory_id);
 CREATE INDEX idx_audit_trail_workflows_advisory_id ON audit_trail_workflows (advisory_id);

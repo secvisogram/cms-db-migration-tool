@@ -167,8 +167,9 @@ public final class Migrator {
     }
 
     /**
-     * Phase 1. By default reads only a small projection of each document, which avoids downloading the
-     * large csaf bodies; falls back to reading whole documents if this CouchDB cannot run the query.
+     * Phase 1. By default reads only a small projection of the required fields of each document, which
+     * avoids downloading the large csaf bodies; falls back to reading whole documents if this CouchDB
+     * cannot run the query.
      */
     private static DocumentValidator readAndValidate(CouchDbClient couchDb, MigrationConfig config,
                                                      MigrationReport report, Progress progress) throws Exception {
@@ -205,7 +206,8 @@ public final class Migrator {
                     throw e;
                 }
                 System.out.println("This CouchDB cannot run the projected read (HTTP " + status
-                        + "); reading the whole documents instead, which is much slower.");
+                        + "); reading the whole documents instead of a projection of the required fields,"
+                        + " which is much slower.");
             }
         }
         DocumentValidator validator = new DocumentValidator(report);

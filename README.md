@@ -59,7 +59,7 @@ docker run --rm ghcr.io/secvisogram/cms-db-migration-tool --dry-run \
 | `--dry-run` | Read CouchDB and run all validation, never touch PostgreSQL. **Run this first.** |
 | `--skip-malformed` | Load the valid documents and list the malformed ones instead of aborting |
 | `--page-size=N` | Documents read from CouchDB per request (default 500). Lower it for large documents if memory is tight. |
-| `--full-validation-read` | Validate by reading the whole documents instead of a small projection (much slower on large advisories; only for comparison) |
+| `--full-validation-read` | Validate by reading the whole documents instead of a small projection of the required fields (much slower on large advisories; only for comparison) |
 | `--quiet` | Leave out the progress lines printed every 15 seconds during the long steps (the phase and result lines stay) |
 
 ### Before you run it
@@ -104,8 +104,7 @@ offending `_id` listed.
   a small projection of every document once to validate, then fetches each accepted document once by
   id, so CouchDB must not change during the run.
 - Load tested with 481,746 documents (30,109 real Red Hat CSAF advisories plus generated versions, comments
-  and audit rows): about 22 minutes, see [loadtest/README.md](loadtest/README.md). It has not been run on
-  real production data, so try it on a copy of your data before the real cutover.
+  and audit rows): about 22 minutes, see [loadtest/README.md](loadtest/README.md).
 
 ## Development
 
