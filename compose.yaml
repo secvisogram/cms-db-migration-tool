@@ -6,8 +6,8 @@
 # there first if it is missing, so the new backend does not have to be started before.
 #
 # Configure through environment variables or a .env file next to this file, see .env.example.
-# Variables without a default are required: CSAF_COUCHDB_DATA_DIR, CSAF_BACKEND_IMAGE, CSAF_DB_NAME,
-# CSAF_DB_USER and CSAF_DB_PASSWORD. Compose checks the whole file for every command, so it refuses to run ANY of
+# Variables without a default are required: CSAF_COUCHDB_DATA_DIR, CSAF_DB_NAME, CSAF_DB_USER and
+# CSAF_DB_PASSWORD. Compose checks the whole file for every command, so it refuses to run ANY of
 # them (the dry run and "down" included) until they are set.
 #
 # All services belong to the profile "migrate" ON PURPOSE: a plain "docker compose up" must not
@@ -72,11 +72,11 @@ services:
   # backend once, without web server and scheduler, so that the backend's own Flyway migration
   # creates the tables, and the container ends. If the schema is already there it changes nothing; a
   # schema from an older, different version of the backend makes it fail (see the guide).
-  # CSAF_BACKEND_IMAGE must be the image of the backend release you are upgrading to, the one that
-  # "backend-cms" uses in the backend's compose file, so that the schema is the one that backend expects.
+  # The image must be the one that "backend-cms" uses in the backend's compose file, so that the schema is the
+  # one that backend expects. Set CSAF_BACKEND_IMAGE if the backend's compose file uses another tag.
   # The real migration waits for it. Its output is not shown by "run": use "docker compose logs schema-init".
   schema-init:
-    image: ${CSAF_BACKEND_IMAGE:?set CSAF_BACKEND_IMAGE to the image of the new backend (the image of backend-cms in the backend's compose file)}
+    image: ${CSAF_BACKEND_IMAGE:-ghcr.io/secvisogram/csaf-cms-backend:2.0.0-RC1}
     profiles: ["migrate"]
     restart: "no"
     # Lets "host.docker.internal" resolve on Linux too (Docker Desktop provides it already).

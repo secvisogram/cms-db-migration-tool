@@ -33,7 +33,7 @@ not migrated.
 | Item | Notes |
 |---|---|
 | Downtime window | The old backend must be stopped while the data is copied. For typical data sizes the migration itself takes seconds to minutes (a load test with 481,746 documents took about 22 minutes). |
-| This repository | Only the migration compose file ([`compose.yaml`](../compose.yaml)) and [`.env.example`](../.env.example) are needed. Clone it, or download the two files. |
+| This repository | Only the migration compose file ([`compose.yaml`](../compose.yaml)) and [`.env.example`](../.env.example) are needed. Clone it, or download the two files into a new, empty folder (not the backend's folder). Below, this folder is called "this repository's folder". |
 | Docker | The new backend stack (backend compose file) runs PostgreSQL. The migration compose file starts a temporary CouchDB on a copy of your old data and runs the tool as a container (`ghcr.io/secvisogram/cms-db-migration-tool:1.0.5`). No Java needed. |
 | Disk space | A temporary second copy of the old CouchDB data, plus the new PostgreSQL volume. |
 
@@ -51,7 +51,7 @@ migration is verified.**
 | migration `.env` | `CSAF_COUCHDB_DATA_DIR`, `CSAF_COUCHDB_USER`, `CSAF_COUCHDB_PASSWORD`, `CSAF_COUCHDB_DBNAME` | opening your copy of the old data (defaults `admin` / `admin` / `csaf`) |
 | migration `.env` | `CSAF_DB_PORT`, `CSAF_DB_NAME`, `CSAF_DB_USER`, `CSAF_DB_PASSWORD` | the target database; use the same values as in the backend's `docker/.env` |
 | migration `.env` | `CSAF_DB_HOST` | leave it at `host.docker.internal`. **Do not copy it from the backend's `docker/.env`**, where it is `cms-db`: that name only exists inside the backend's own compose network, so the migration cannot reach it. |
-| migration `.env` | `CSAF_BACKEND_IMAGE` | the image of the new backend, exactly the `image:` of `backend-cms` in the backend compose file. It is used only to create the database schema (see 3.4). |
+| migration `.env` | `CSAF_BACKEND_IMAGE` | optional, defaults to `ghcr.io/secvisogram/csaf-cms-backend:2.0.0-RC1`. Set it only if `backend-cms` in the backend compose file uses another image: it must be exactly that image. It is used only to create the database schema (see 3.4). |
 
 `CSAF_DB_HOST` defaults to `host.docker.internal`, which reaches the PostgreSQL port
 that the backend compose file publishes on the host (`CSAF_DB_PORT`). That is why it
@@ -62,7 +62,7 @@ them before the first start of the new stack: PostgreSQL creates its user only w
 not change the existing database. If that happens, change the password back or
 recreate the database (remove only the `cms-db-data` volume, not the Keycloak one).
 
-`CSAF_COUCHDB_DATA_DIR`, `CSAF_BACKEND_IMAGE`, `CSAF_DB_NAME`, `CSAF_DB_USER` and
+`CSAF_COUCHDB_DATA_DIR`, `CSAF_DB_NAME`, `CSAF_DB_USER` and
 `CSAF_DB_PASSWORD` have no default and must be set in the migration `.env`. Compose checks
 them for every command in this folder, so it refuses to start anything, the dry run and the
 clean-up included, until they are all filled in.
@@ -137,7 +137,7 @@ error.
    docker compose run --rm db-migration
    ```
 
-   First the service `schema-init` starts the image `CSAF_BACKEND_IMAGE` once, without
+   First the service `schema-init` starts the image of the new backend (`CSAF_BACKEND_IMAGE`) once, without
    web server, so that the backend's own Flyway migration creates the tables in the new
    database. It ends after a few seconds and changes nothing if the schema is already
    there. Compose shows nothing of its output; if it fails, see
@@ -152,8 +152,10 @@ error.
 ### 3.5 Verify and go live
 
 7. With the backend compose file, in the backend clone's `docker/` folder, start the
-   backend again with `docker compose start backend-cms`, open the CMS in your browser (reload the
-   page) and log in. Then check:
+   whole new stack with `docker compose up -d` (until now only `cms-db` ran, and
+   `docker compose start` would not create the missing containers). Wait until all
+   services are up, which can take a minute because of Keycloak. Open the CMS in your
+   browser (reload the page) and log in. Then check:
    - The advisory list shows the advisories you know, in the same workflow states.
      The number matches the `Advisory` line of the migration report.
    - Open one advisory you know well: its content (and its comments, if it had any)
@@ -192,7 +194,7 @@ opens them, so never point it at your only backup), then follow the
 | `password authentication failed` or connection refused on the real run | Another PostgreSQL listens on the same host port, or `CSAF_DB_HOST` / `CSAF_DB_PORT` is wrong. Check that the backend stack's `cms-db` is up and publishes `CSAF_DB_PORT`. |
 | `host.docker.internal` does not resolve | Only possible on a Docker without `host-gateway` support (Docker older than 20.10). Set `CSAF_DB_HOST` to an address of the host. |
 | `service "schema-init" didn't complete successfully` | The schema could not be created. Read why with `docker compose logs schema-init`. `FATAL: password authentication failed`: wrong `CSAF_DB_USER` or `CSAF_DB_PASSWORD`, or another PostgreSQL answers on that port. `Unable to obtain connection from database: The connection attempt failed`: PostgreSQL is not running or not reachable, or `CSAF_DB_HOST` or `CSAF_DB_PORT` is wrong. A typical mistake is `CSAF_DB_HOST=cms-db`, copied from the backend's `docker/.env`: in the migration `.env` it must be `host.docker.internal`. `Migration checksum mismatch for migration version 1` or `Found non-empty schema(s) "public" but no schema history table`: the database was not created by this backend release's Flyway migration (for example by an older version of it). Use a fresh, empty database, see the next row. The migration does not start in any of these cases. |
-| Backend fails at startup with a Flyway checksum or "non-empty schema" error | The database was not created by this backend's Flyway migrations. Use a fresh, empty database (remove the `cms-db-data` volume of the new stack only, **not** the Keycloak volume) and start again. |
+| Backend fails at startup with a Flyway checksum or "non-empty schema" error | The database was not created by this backend's Flyway migrations. A frequent reason is that the image of `schema-init` (default or `CSAF_BACKEND_IMAGE` in the migration `.env`) is not the image of `backend-cms` in the backend compose file (for example an older pre-release tag): the schema was then created by the other image, and the checksums differ (`Applied to database` against `Resolved locally`). Compare `docker compose config \| grep image` in both folders; the two images must be identical. Fix the value, then use a fresh, empty database (remove the `cms-db-data` volume of the new stack only, **not** the Keycloak volume), run the migration again and start the stack. |
 | Backend log shows connection attempts to CouchDB (`:5984`) | The old backend image is still in use. Check the image tag and rebuild or pull. |
 | The tool runs out of memory | Documents are streamed, so memory depends on the document count, not their size. Use a smaller page size, for example `--page-size=100`, or raise the heap with `-e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=85`. |
 
