@@ -80,7 +80,7 @@ Now choose how to run the tool.
 
 ## 2a Container
 
-The tool is the image `ghcr.io/secvisogram/cms-db-migration-tool:1.0.5`. The
+The tool is the image `ghcr.io/secvisogram/cms-db-migration-tool:1.0.7`. The
 simplest reliable way is to put the tool, the throwaway CouchDB from step 5 and
 `cms-db` on the **same Docker network**. Then no database port has to be published, and you
 address the databases by container name.
@@ -107,13 +107,13 @@ address the databases by container name.
    ```shell
    # Dry run: reads and validates CouchDB, writes nothing
    docker run --rm --network <network> \
-     ghcr.io/secvisogram/cms-db-migration-tool:1.0.5 --dry-run \
+     ghcr.io/secvisogram/cms-db-migration-tool:1.0.7 --dry-run \
      --couchdb-url=http://old-couchdb:5984/<dbname> \
      --couchdb-user=<old user> --couchdb-password=<old password>
 
    # The real migration
    docker run --rm --network <network> \
-     ghcr.io/secvisogram/cms-db-migration-tool:1.0.5 \
+     ghcr.io/secvisogram/cms-db-migration-tool:1.0.7 \
      --couchdb-url=http://old-couchdb:5984/<dbname> \
      --couchdb-user=<old user> --couchdb-password=<old password> \
      --pg-url=jdbc:postgresql://cms-db:5432/csaf \
@@ -159,7 +159,7 @@ databases through **published ports** on that machine.
    and compare its SHA-256 digest shown there with `sha256sum`:
 
    ```shell
-   curl -L -O https://github.com/secvisogram/cms-db-migration-tool/releases/download/v1.0.5/csaf-couchdb-postgres-migrator.jar
+   curl -L -O https://github.com/secvisogram/cms-db-migration-tool/releases/download/v1.0.7/csaf-couchdb-postgres-migrator.jar
    ```
 
 5. Run the migration:

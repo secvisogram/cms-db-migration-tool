@@ -55,7 +55,7 @@ services:
 
   # Step 1: read and validate only, never touches PostgreSQL.
   db-migration-dry-run:
-    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.5}
+    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.7}
     profiles: ["migrate"]
     restart: "no"
     # The image's entrypoint is "java -jar /app/migrator.jar"; these are its arguments.
@@ -98,7 +98,7 @@ services:
   # Extra options can be appended, e.g. "docker compose run --rm db-migration --skip-malformed".
   # Both steps accept "--page-size=N" (documents read from CouchDB per request, default 500).
   db-migration:
-    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.5}
+    image: ${CSAF_MIGRATOR_IMAGE:-ghcr.io/secvisogram/cms-db-migration-tool:1.0.7}
     profiles: ["migrate"]
     restart: "no"
     # Lets "host.docker.internal" resolve on Linux too (Docker Desktop provides it already).

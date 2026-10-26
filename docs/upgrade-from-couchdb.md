@@ -34,7 +34,7 @@ not migrated.
 |---|---|
 | Downtime window | The old backend must be stopped while the data is copied. For typical data sizes the migration itself takes seconds to minutes (a load test with 481,746 documents took about 22 minutes). |
 | This repository | Only the migration compose file ([`compose.yaml`](../compose.yaml)) and [`.env.example`](../.env.example) are needed. Clone it, or download the two files into a new, empty folder (not the backend's folder). Below, this folder is called "this repository's folder". |
-| Docker | The new backend stack (backend compose file) runs PostgreSQL. The migration compose file starts a temporary CouchDB on a copy of your old data and runs the tool as a container (`ghcr.io/secvisogram/cms-db-migration-tool:1.0.5`). No Java needed. |
+| Docker | The new backend stack (backend compose file) runs PostgreSQL. The migration compose file starts a temporary CouchDB on a copy of your old data and runs the tool as a container (`ghcr.io/secvisogram/cms-db-migration-tool:1.0.7`). No Java needed. |
 | Disk space | A temporary second copy of the old CouchDB data, plus the new PostgreSQL volume. |
 
 ## 2 Configuration
