@@ -1,5 +1,5 @@
 -- Reference copy of csaf-cms-backend's V1__initial_schema.sql (branch feat/couchdb-to-postgres-migration-performace,
--- commit b76b0ae, synced 2026-10-15, then without the GIN index idx_advisories_csaf, synced 2026-10-23). Test
+-- commit b76b0ae, synced 2026-10-15, then without the GIN index idx_advisories_csaf and with advisories.updated_at, as in backend PR #335). Test
 -- fixture only: in a real run the target schema is owned by the backend's Flyway migrations. Re-sync from the
 -- source of truth if it diverges.
 
@@ -22,6 +22,7 @@ CREATE TABLE advisories
     tmp_tracking_id      VARCHAR(255),
     advisory_reference   UUID,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
     version              BIGINT       NOT NULL DEFAULT 0
 );
 

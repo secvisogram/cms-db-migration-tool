@@ -135,6 +135,8 @@ class MigrationIntegrationTest {
 
             // created_at backfilled from the earliest audit-trail row; entities without one keep now().
             assertEquals("2026-01-01", createdAtDate(conn, "advisories", ADVISORY_ID));
+            // updated_at from the latest audit-trail row of the advisory (the workflow change).
+            assertEquals("2026-01-02", dateOf(conn, "advisories", "updated_at", ADVISORY_ID));
             assertEquals("2026-01-03", createdAtDate(conn, "comments", COMMENT_ID));
             assertNotEquals("2026-01-03", createdAtDate(conn, "comments", ANSWER_ID));
             // Without audit rows (this comment, and every advisory version) created_at is the import time.
@@ -314,9 +316,13 @@ class MigrationIntegrationTest {
     }
 
     private static String createdAtDate(Connection conn, String table, String id) throws Exception {
+        return dateOf(conn, table, "created_at", id);
+    }
+
+    private static String dateOf(Connection conn, String table, String column, String id) throws Exception {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM " + table + " WHERE id = '" + id + "'")) {
+                     "SELECT to_char(" + column + " AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM " + table + " WHERE id = '" + id + "'")) {
             assertEquals(true, rs.next());
             return rs.getString(1);
         }

@@ -52,13 +52,17 @@ public class PostgresWriter {
     /**
      * @param createdAtById earliest audit time per advisory id, see {@link DocumentValidator#advisoryCreatedAt()};
      *                      an advisory without an entry gets the column default (the import time)
+     * @param updatedAtById latest audit time per advisory id, see {@link DocumentValidator#advisoryUpdatedAt()};
+     *                      an advisory without an entry gets the column default (the import time)
      */
-    public int insertAdvisories(List<JsonNode> docs, Map<String, Instant> createdAtById) throws SQLException {
+    public int insertAdvisories(List<JsonNode> docs, Map<String, Instant> createdAtById,
+                                Map<String, Instant> updatedAtById) throws SQLException {
         String sql = """
                 INSERT INTO advisories
                     (id, workflow_state, owner, csaf, tracking_id, document_title, current_release_date,
-                     versioning_type, last_major_version, tmp_tracking_id, created_at)
-                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now()))
+                     versioning_type, last_major_version, tmp_tracking_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now()),
+                        COALESCE(?::timestamptz, now()))
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int count = 0;
@@ -70,7 +74,9 @@ public class PostgresWriter {
                 ps.setString(8, text(doc, FieldMappings.Advisory.VERSIONING_TYPE));
                 ps.setString(9, text(doc, FieldMappings.Advisory.LAST_MAJOR_VERSION));
                 ps.setString(10, text(doc, FieldMappings.Advisory.TMP_TRACKING_ID));
-                ps.setTimestamp(11, timestampOrNull(createdAtById.get(doc.path(FieldMappings.ID).asText())));
+                String id = doc.path(FieldMappings.ID).asText();
+                ps.setTimestamp(11, timestampOrNull(createdAtById.get(id)));
+                ps.setTimestamp(12, timestampOrNull(updatedAtById.get(id)));
                 ps.addBatch();
                 count++;
             }

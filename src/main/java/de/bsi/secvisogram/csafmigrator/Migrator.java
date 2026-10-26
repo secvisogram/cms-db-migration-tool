@@ -76,9 +76,11 @@ public final class Migrator {
         }
 
         // Phase 2: write. created_at of advisories and comments is inserted directly, from the earliest
-        // audit-trail time the validation pass saw, so no slow UPDATE of the rows is needed afterwards.
+        // audit-trail time the validation pass saw, and updated_at of advisories from the latest, so no slow
+        // UPDATE of the rows is needed afterwards.
         System.out.println("Phase 2 of 2: writing to PostgreSQL.");
         Map<String, Instant> advisoryCreatedAt = validator.advisoryCreatedAt();
+        Map<String, Instant> advisoryUpdatedAt = validator.advisoryUpdatedAt();
         Map<String, Instant> commentCreatedAt = validator.commentCreatedAt();
         try (Connection connection = DriverManager.getConnection(config.pgUrl, connectionProperties(config))) {
             connection.setAutoCommit(false);
@@ -112,7 +114,7 @@ public final class Migrator {
                         if (batch.isEmpty()) {
                             return;
                         }
-                        inserted[0] += insert(writer, type, batch, advisoryCreatedAt, commentCreatedAt);
+                        inserted[0] += insert(writer, type, batch, advisoryCreatedAt, advisoryUpdatedAt, commentCreatedAt);
                         progress.advance(batch.size());
                         if (type == ObjectType.Comment) {
                             for (JsonNode doc : batch) {
@@ -241,10 +243,11 @@ public final class Migrator {
     }
 
     private static int insert(PostgresWriter writer, ObjectType type, List<JsonNode> docs,
-                              Map<String, Instant> advisoryCreatedAt, Map<String, Instant> commentCreatedAt)
+                              Map<String, Instant> advisoryCreatedAt, Map<String, Instant> advisoryUpdatedAt,
+                              Map<String, Instant> commentCreatedAt)
             throws SQLException {
         return switch (type) {
-            case Advisory -> writer.insertAdvisories(docs, advisoryCreatedAt);
+            case Advisory -> writer.insertAdvisories(docs, advisoryCreatedAt, advisoryUpdatedAt);
             case AdvisoryVersion -> writer.insertAdvisoryVersions(docs);
             case Comment -> writer.insertComments(docs, commentCreatedAt);
             case AuditTrailDocument -> writer.insertAuditTrailDocuments(docs);

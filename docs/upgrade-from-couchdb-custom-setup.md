@@ -124,14 +124,6 @@ address the databases by container name.
    internal port. If a database does not run in Docker, use its host name or IP
    address instead, as long as the container can reach it.
 
-If the image cannot be pulled (`unauthorized`), build it from the repository, or
-use the jar:
-
-```shell
-docker build -t ghcr.io/secvisogram/cms-db-migration-tool:1.0.5 \
-  https://github.com/secvisogram/cms-db-migration-tool.git#v1.0.5
-```
-
 (Publishing the databases on `127.0.0.1` only and reaching them through
 `host.docker.internal` does **not** work: a container cannot connect to a port that
 is bound to the host's loopback interface only.)

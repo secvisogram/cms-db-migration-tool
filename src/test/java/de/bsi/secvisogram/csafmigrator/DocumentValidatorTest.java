@@ -73,9 +73,12 @@ class DocumentValidatorTest {
         validator.finish();
 
         assertEquals(java.time.Instant.parse("2026-01-02T08:30:00Z"), validator.advisoryCreatedAt().get(ADV));
+        // updated_at: the latest valid audit row of the advisory, document and workflow audits together.
+        assertEquals(java.time.Instant.parse("2026-01-09T10:00:00Z"), validator.advisoryUpdatedAt().get(ADV));
         assertEquals(java.time.Instant.parse("2026-02-01T12:00:00Z"), validator.commentCreatedAt().get(C1));
         // Without audit rows there is no entry, so the database default (import time) applies.
         assertFalse(validator.advisoryCreatedAt().containsKey(adv2));
+        assertFalse(validator.advisoryUpdatedAt().containsKey(adv2));
         assertFalse(validator.commentCreatedAt().containsKey(C2));
     }
 

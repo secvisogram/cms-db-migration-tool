@@ -41,6 +41,8 @@ public final class DocumentValidator {
     private Set<String> checkedCsafObjects = Set.of();
     /** Earliest audit-trail time per advisory (document and workflow audits) and per comment. */
     private final Map<String, Instant> earliestByAdvisory = new HashMap<>();
+    /** Latest audit-trail time per advisory (document and workflow audits). */
+    private final Map<String, Instant> latestByAdvisory = new HashMap<>();
     private final Map<String, Instant> earliestByComment = new HashMap<>();
     private final Map<String, Integer> sourceCounts = new LinkedHashMap<>();
     private final Map<String, List<Light>> lights = new LinkedHashMap<>();
@@ -110,14 +112,19 @@ public final class DocumentValidator {
 
     /**
      * The backend's documents carry no creation time of their own that can be trusted, so an advisory's or
-     * comment's created_at is the earliest time of its audit-trail rows. The rows are all seen here, so the
-     * earliest time is kept per parent and the migrator can insert created_at directly instead of updating
+     * comment's created_at is the earliest time of its audit-trail rows, and an advisory's updated_at (every
+     * change of it, workflow state changes included, leaves an audit row) the latest. The rows are all seen
+     * here, so the times are kept per parent and the migrator can insert them directly instead of updating
      * every row afterwards. Only rows that passed their own checks count, as only those get inserted.
      */
     private void recordAuditTime(ObjectType type, JsonNode doc) {
         switch (type) {
-            case AuditTrailDocument, AuditTrailWorkflow -> earliestByAdvisory.merge(
-                    doc.path(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID).asText(), auditTime(doc), DocumentValidator::earlier);
+            case AuditTrailDocument, AuditTrailWorkflow -> {
+                String advisoryId = doc.path(FieldMappings.AdvisoryAuditTrail.ADVISORY_ID).asText();
+                Instant time = auditTime(doc);
+                earliestByAdvisory.merge(advisoryId, time, DocumentValidator::earlier);
+                latestByAdvisory.merge(advisoryId, time, DocumentValidator::later);
+            }
             case CommentAuditTrail -> earliestByComment.merge(
                     doc.path(FieldMappings.CommentAuditTrail.COMMENT_ID).asText(), auditTime(doc), DocumentValidator::earlier);
             default -> {
@@ -133,9 +140,18 @@ public final class DocumentValidator {
         return a.isBefore(b) ? a : b;
     }
 
+    private static Instant later(Instant a, Instant b) {
+        return a.isAfter(b) ? a : b;
+    }
+
     /** Earliest audit time per advisory id; an advisory without audit rows has no entry. */
     public Map<String, Instant> advisoryCreatedAt() {
         return Collections.unmodifiableMap(earliestByAdvisory);
+    }
+
+    /** Latest audit time per advisory id; an advisory without audit rows has no entry. */
+    public Map<String, Instant> advisoryUpdatedAt() {
+        return Collections.unmodifiableMap(latestByAdvisory);
     }
 
     /** Earliest audit time per comment id; a comment without audit rows has no entry. */

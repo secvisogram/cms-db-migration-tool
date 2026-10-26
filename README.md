@@ -85,6 +85,9 @@ All seven document types of the old database: `Advisory`, `AdvisoryVersion`, `Co
 - `created_at` of advisories and comments is taken from their earliest audit-trail row. The old
   documents' own `createdAt` field is not used: it is missing on advisories that were edited at least
   once. Entities without audit rows, and all advisory versions, get the import time.
+- `updated_at` of advisories is taken from their latest audit-trail row (document and workflow audits),
+  as every change of an advisory, a workflow state change included, leaves one. Without audit rows it is
+  the import time.
 - The field mapping lives in `src/main/java/.../mapping/FieldMappings.java`.
 
 ## Validation
