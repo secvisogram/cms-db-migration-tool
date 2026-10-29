@@ -13,7 +13,7 @@ If you do run the `docker/` setup of `csaf-cms-backend`, follow
 Background, what changes for users, the variable names and the troubleshooting
 table are in the [main guide](upgrade-from-couchdb.md); they apply here too.
 
-Releases up to **1.1.6** store data in CouchDB, newer ones in PostgreSQL. The
+Releases **1.1.x and older** store data in CouchDB, newer ones in PostgreSQL. The
 migration tool only *reads* CouchDB and writes into an empty PostgreSQL database.
 Plan some downtime: changes made after step 1 are not migrated.
 

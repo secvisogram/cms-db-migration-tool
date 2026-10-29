@@ -1,7 +1,7 @@
 # CSAF CouchDB → PostgreSQL Migrator
 
-One-shot tool that copies all data of a `csaf-cms-backend` installation from CouchDB (releases up to
-`v1.1.6`) into the PostgreSQL schema used by later releases (2.0.0 and newer). It reads CouchDB over
+One-shot tool that copies all data of a `csaf-cms-backend` installation from CouchDB (releases 1.1.x
+and older) into the PostgreSQL schema used by later releases (2.0.0 and newer). It reads CouchDB over
 plain HTTP and batch-inserts everything into PostgreSQL in a single transaction.
 
 ## Upgrading a csaf-cms-backend installation? Start here

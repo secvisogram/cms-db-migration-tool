@@ -3,7 +3,7 @@
 > **Draft.** Written ahead of the **2.0.0** release of `csaf-cms-backend`: the tag
 > `v2.0.0` and the backend image tag `2.0.0` exist only after that release.
 
-Releases up to and including **1.1.6** of `csaf-cms-backend` store their data in
+Releases **1.1.x and older** of `csaf-cms-backend` store their data in
 CouchDB. Starting with **2.0.0** the backend uses PostgreSQL. The REST API is
 unchanged, but the **existing data has to be moved once**, with this tool. Nothing
 to keep? Install fresh, no migration needed.
@@ -76,7 +76,7 @@ error.
 ### 3.1 Back up and stop, with the old version
 
 1. If the old stack is running, make sure your checkout is still the **old**
-   version (for example `git checkout v1.1.6`). Then stop it with the old backend
+   version (`git checkout <tag of your old release>`). Then stop it with the old backend
    compose file:
 
    ```shell

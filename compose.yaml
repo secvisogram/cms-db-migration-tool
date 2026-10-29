@@ -1,4 +1,4 @@
-# One-time migration of data from the CouchDB-based CMS releases (<= 1.1.6) to PostgreSQL.
+# One-time migration of data from the CouchDB-based CMS releases (1.1.x and older) to PostgreSQL.
 #
 # Self-contained: it does not depend on the backend's compose file. It starts a temporary
 # CouchDB on a COPY of the old data (the original is never opened) and runs the migration tool
