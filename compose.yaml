@@ -17,7 +17,7 @@
 #   docker compose run --rm db-migration-dry-run   # validate only, never touches PostgreSQL
 #   (stop the new backend so nothing writes during the migration)
 #   docker compose run --rm db-migration           # the real migration
-#   docker compose down -v                         # clean up the scratch copy afterwards
+#   docker compose --profile migrate down -v       # clean up the scratch copy afterwards
 
 name: csaf-cms-migration
 

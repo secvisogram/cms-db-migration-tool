@@ -166,10 +166,12 @@ error.
    this repository's folder:
 
    ```shell
-   docker compose down -v
+   docker compose --profile migrate down -v
    ```
 
-   This only removes the migration's own containers and scratch volume (the project
+   The `--profile migrate` is needed because all migration services belong to that profile:
+   a plain `docker compose down` ignores them and removes nothing, and the scratch CouchDB
+   keeps running. This only removes the migration's own containers and scratch volume (the project
    is named `csaf-cms-migration`). It does not touch the backend stack (the backend compose file). Then delete
    the old `CSAF_COUCHDB_*` lines. Keep your backup until you are confident.
 
